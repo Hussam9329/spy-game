@@ -9,7 +9,7 @@ export async function GET(
     const { code } = await params;
     const playerId = request.nextUrl.searchParams.get('playerId');
 
-    const game = getPublicGameState(code, playerId || undefined);
+    const game = await getPublicGameState(code, playerId || undefined);
     if (!game) {
       return NextResponse.json({ error: 'الغرفة غير موجودة' }, { status: 404 });
     }

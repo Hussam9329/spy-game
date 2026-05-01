@@ -14,7 +14,7 @@ export async function POST(
       return NextResponse.json({ error: 'الاسم مطلوب' }, { status: 400 });
     }
 
-    const result = joinRoom(code, playerName.trim());
+    const result = await joinRoom(code, playerName.trim());
     if ('error' in result) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }

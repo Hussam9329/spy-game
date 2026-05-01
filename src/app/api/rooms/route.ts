@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'اسم الهوست مطلوب' }, { status: 400 });
     }
 
-    const game = createRoom(hostName.trim());
+    const game = await createRoom(hostName.trim());
 
     return NextResponse.json({
       code: game.code,

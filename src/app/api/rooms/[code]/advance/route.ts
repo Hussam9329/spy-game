@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { resolveNight, advanceToDay } from '@/lib/game-store';
+import { resolveNight, advanceToDay, startVoting, resolveVotes, advanceToNight } from '@/lib/game-store';
 
 export async function POST(
   request: NextRequest,
@@ -15,7 +15,7 @@ export async function POST(
     }
 
     if (action === 'resolve-night') {
-      const result = resolveNight(code, hostId);
+      const result = await resolveNight(code, hostId);
       if ('error' in result) {
         return NextResponse.json({ error: result.error }, { status: 400 });
       }
@@ -28,7 +28,7 @@ export async function POST(
     }
 
     if (action === 'advance-to-day') {
-      const result = advanceToDay(code, hostId);
+      const result = await advanceToDay(code, hostId);
       if ('error' in result) {
         return NextResponse.json({ error: result.error }, { status: 400 });
       }
@@ -38,8 +38,7 @@ export async function POST(
     }
 
     if (action === 'start-voting') {
-      const { startVoting } = await import('@/lib/game-store');
-      const result = startVoting(code, hostId);
+      const result = await startVoting(code, hostId);
       if ('error' in result) {
         return NextResponse.json({ error: result.error }, { status: 400 });
       }
@@ -49,8 +48,7 @@ export async function POST(
     }
 
     if (action === 'resolve-votes') {
-      const { resolveVotes } = await import('@/lib/game-store');
-      const result = resolveVotes(code, hostId);
+      const result = await resolveVotes(code, hostId);
       if ('error' in result) {
         return NextResponse.json({ error: result.error }, { status: 400 });
       }
@@ -62,8 +60,7 @@ export async function POST(
     }
 
     if (action === 'advance-to-night') {
-      const { advanceToNight } = await import('@/lib/game-store');
-      const result = advanceToNight(code, hostId);
+      const result = await advanceToNight(code, hostId);
       if ('error' in result) {
         return NextResponse.json({ error: result.error }, { status: 400 });
       }

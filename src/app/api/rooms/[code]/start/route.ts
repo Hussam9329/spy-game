@@ -14,7 +14,7 @@ export async function POST(
       return NextResponse.json({ error: 'معرّف الهوست مطلوب' }, { status: 400 });
     }
 
-    const result = startGame(code, hostId);
+    const result = await startGame(code, hostId);
     if ('error' in result) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }

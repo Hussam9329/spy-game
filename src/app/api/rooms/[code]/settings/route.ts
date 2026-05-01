@@ -14,7 +14,7 @@ export async function POST(
       return NextResponse.json({ error: 'معرّف الهوست مطلوب' }, { status: 400 });
     }
 
-    const result = updateSettings(code, hostId, {
+    const result = await updateSettings(code, hostId, {
       mafia: Number(mafia),
       doctors: Number(doctors),
       snipers: Number(snipers),

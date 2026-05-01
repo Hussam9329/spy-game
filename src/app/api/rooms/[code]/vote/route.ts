@@ -14,7 +14,7 @@ export async function POST(
       return NextResponse.json({ error: 'جميع الحقول مطلوبة' }, { status: 400 });
     }
 
-    const result = submitVote(code, playerId, targetId);
+    const result = await submitVote(code, playerId, targetId);
     if ('error' in result) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }

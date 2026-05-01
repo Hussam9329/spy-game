@@ -14,7 +14,7 @@ export async function POST(
       return NextResponse.json({ error: 'جميع الحقول مطلوبة' }, { status: 400 });
     }
 
-    const result = submitNightAction(code, playerId, { type, targetId });
+    const result = await submitNightAction(code, playerId, { type, targetId });
     if ('error' in result) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
