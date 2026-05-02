@@ -3,10 +3,10 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
-  title: "الجاسوس - لعبة الأدوار الاجتماعية",
-  description: "لعبة الجاسوس - لعبة استنتاج اجتماعية مشابهة ل لعبة المافيا",
+  title: "مافيا - لعبة الاستنتاج الاجتماعية",
+  description: "لعبة مافيا - لعبة استنتاج اجتماعية بين المافيا والمواطنين الصالحين. اكتشف المافيا قبل فوات الأوان!",
   icons: {
-    icon: "🔍",
+    icon: "🔫",
   },
 };
 

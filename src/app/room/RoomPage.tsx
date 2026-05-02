@@ -429,12 +429,12 @@ export default function RoomPage() {
 
   // ====== SHARED HEADER ======
   const renderHeader = () => (
-    <div className="text-center mb-4">
-      <Badge variant="outline" className="border-red-900/40 text-red-400 mb-2">
+    <div className="text-center mb-4 space-y-1">
+      <Badge variant="outline" className="border-red-900/40 text-red-400">
         {isHost ? '👁️ المراقب' : `🎮 ${myPlayer?.name || 'لاعب'}`}
       </Badge>
-      {game.round > 0 && <span className="text-muted-foreground text-sm ml-2">الجولة {game.round}</span>}
-      {game.isBotHost && <span className="text-muted-foreground text-sm ml-2">🤖 بوت</span>}
+      {game.round > 0 && <Badge variant="outline" className="border-yellow-900/40 text-yellow-400 mr-1">الجولة {game.round}</Badge>}
+      {game.isBotHost && <Badge variant="outline" className="border-purple-900/40 text-purple-400 mr-1">🤖 بوت</Badge>}
     </div>
   );
 
@@ -1771,7 +1771,7 @@ export default function RoomPage() {
   );
 
   return (
-    <div className="min-h-screen p-4 relative overflow-hidden">
+    <div className="min-h-screen p-3 sm:p-4 relative overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-b from-black via-[oklch(0.08_0.02_280)] to-black" />
       <div className="relative z-10 w-full max-w-2xl mx-auto">
         {renderHeader()}

@@ -503,14 +503,14 @@ export default function HomePage() {
   );
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-screen flex flex-col items-center justify-start sm:justify-center p-4 pt-8 sm:pt-4 relative overflow-hidden">
       {/* Background effects */}
       <div className="absolute inset-0 bg-gradient-to-b from-black via-[oklch(0.08_0.02_280)] to-black" />
       <div className="absolute inset-0 opacity-10" style={{
         backgroundImage: `radial-gradient(circle at 20% 50%, rgba(220,38,38,0.3) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(220,38,38,0.15) 0%, transparent 40%)`,
       }} />
 
-      <div className="relative z-10 w-full max-w-lg flex flex-col items-center gap-8">
+      <div className="relative z-10 w-full max-w-lg mx-auto flex flex-col items-center gap-6 px-2">
         {/* Logo / Title */}
         <motion.div
           initial={{ opacity: 0, y: -30 }}
@@ -518,11 +518,11 @@ export default function HomePage() {
           transition={{ duration: 0.8, ease: 'easeOut' }}
           className="text-center"
         >
-          <div className="text-8xl mb-4 animate-float">🔫</div>
-          <h1 className="text-6xl font-bold bg-gradient-to-l from-red-500 via-red-400 to-red-600 bg-clip-text text-transparent mb-3">
+          <div className="text-7xl sm:text-8xl mb-4 animate-float">🔫</div>
+          <h1 className="text-5xl sm:text-6xl md:text-7xl font-bold bg-gradient-to-l from-red-500 via-red-400 to-red-600 bg-clip-text text-transparent mb-2 leading-tight">
             مافيا
           </h1>
-          <p className="text-xl text-muted-foreground">
+          <p className="text-lg sm:text-xl text-muted-foreground">
             لعبة استنتاج اجتماعية
           </p>
         </motion.div>
@@ -534,7 +534,7 @@ export default function HomePage() {
           transition={{ delay: 0.3, duration: 0.8 }}
         >
           <Card className="bg-card/50 backdrop-blur-sm border-red-900/20">
-            <CardContent className="p-5 text-center">
+            <CardContent className="p-4 sm:p-5 text-center">
               <p className="text-muted-foreground leading-relaxed text-sm">
                 🔴 المافيا تقتل وتسكّت كل ليلة...
                 <br />
