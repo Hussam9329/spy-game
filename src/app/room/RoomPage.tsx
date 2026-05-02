@@ -11,7 +11,7 @@ import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ROLE_INFO, type GamePhase, type Role } from '@/lib/game-types';
+import { ROLE_INFO, type GamePhase, type Role, type MafiaChatMessage } from '@/lib/game-types';
 
 interface GamePlayer {
   id: string;
@@ -63,6 +63,7 @@ interface GameStateView {
   justificationTime?: number;
   voteCount?: number;
   revoteCount?: number;
+  mafiaChat?: MafiaChatMessage[];
 }
 
 export default function RoomPage() {
@@ -84,6 +85,8 @@ export default function RoomPage() {
   const [justificationTimer, setJustificationTimer] = useState(0);
   const [revoteTarget, setRevoteTarget] = useState('');
   const [currentJustifier, setCurrentJustifier] = useState(0);
+  const [chatMessage, setChatMessage] = useState('');
+  const [chatSending, setChatSending] = useState(false);
 
   const isHost = game?.isHost === true;
 
@@ -202,6 +205,25 @@ export default function RoomPage() {
 
   const handleAdvance = (action: string) => apiCall(`/api/rooms/${code}/advance`, { hostId: playerId, action });
 
+  const handleSendChat = async () => {
+    if (!chatMessage.trim() || chatSending) return;
+    setChatSending(true);
+    try {
+      const res = await fetch(`/api/rooms/${code}/mafia-chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId, message: chatMessage }),
+      });
+      const data = await res.json();
+      if (data.error) { setError(data.error); }
+      else { setChatMessage(''); await fetchGame(); }
+    } catch {
+      setError('خطأ في إرسال الرسالة');
+    } finally {
+      setChatSending(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -277,6 +299,55 @@ export default function RoomPage() {
       {game.round > 0 && <span className="text-muted-foreground text-sm ml-2">الجولة {game.round}</span>}
     </div>
   );
+
+  // ====== MAFIA CHAT COMPONENT (shared between Mafia player + Host) ======
+  const renderMafiaChat = (canSend: boolean = false) => {
+    const messages = game.mafiaChat || [];
+    return (
+      <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
+        <CardHeader><CardTitle className="text-lg text-red-400">💬 دردشة المافيا السرية</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <ScrollArea className="h-48 rounded-lg bg-red-950/20 p-3">
+            {messages.length === 0 ? (
+              <p className="text-center text-muted-foreground text-sm">لا توجد رسائل بعد...</p>
+            ) : (
+              <div className="space-y-2">
+                {messages.map((msg) => (
+                  <div key={msg.id} className={`p-2 rounded-lg ${msg.senderId === playerId ? 'bg-red-900/30 ml-4' : 'bg-secondary/50 mr-4'}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-bold text-red-400">🔴 {msg.senderName}</span>
+                      <span className="text-xs text-muted-foreground">{new Date(msg.timestamp).toLocaleTimeString('ar', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                    <p className="text-sm text-foreground leading-relaxed">{msg.message}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+          {canSend && (
+            <div className="flex gap-2">
+              <Input
+                value={chatMessage}
+                onChange={(e) => setChatMessage(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendChat(); } }}
+                placeholder="اكتب رسالتك هنا..."
+                className="bg-input/50 text-sm"
+                maxLength={500}
+                disabled={chatSending}
+              />
+              <Button
+                onClick={handleSendChat}
+                disabled={!chatMessage.trim() || chatSending}
+                className="bg-gradient-to-l from-red-700 to-red-600 px-4 shrink-0"
+              >
+                {chatSending ? '⏳' : '📤'}
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
 
   // ====== ALL ROLES PANEL (Host always sees) ======
   const renderAllRolesPanel = () => (
@@ -455,6 +526,9 @@ export default function RoomPage() {
       {game.nightActionsComplete && (
         <p className="text-center text-green-400 text-sm">✅ جميع الإجراءات الليلية مكتملة!</p>
       )}
+
+      {/* Mafia chat - host can see but not send */}
+      {renderMafiaChat(false)}
 
       <Button onClick={() => handleAdvance('resolve-night')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
         ☀️ إنهاء الليل وإعلان النتائج
@@ -850,6 +924,9 @@ export default function RoomPage() {
       {game.mafiaBuddies && game.mafiaBuddies.length > 0 && (
         <p className="text-red-400/80 text-sm text-center">زملاؤك: {game.mafiaBuddies.join('، ')}</p>
       )}
+
+      {/* Mafia Chat - mafia can send and receive */}
+      {renderMafiaChat(true)}
 
       {/* Kill target */}
       <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">

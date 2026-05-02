@@ -36,6 +36,15 @@ export interface NightActions {
   investigatorChecks: Record<string, string>;
 }
 
+export interface MafiaChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  message: string;
+  timestamp: number;
+  round: number;
+}
+
 export interface GameState {
   code: string;
   hostId: string;
@@ -60,6 +69,7 @@ export interface GameState {
   isTie: boolean;                 // Whether there's a tie in the vote
   revotes: Record<string, string>; // voterId -> targetId (or 'skip') for revote
   justificationTime: number;      // Time in seconds for justification (default 60)
+  mafiaChat: MafiaChatMessage[];  // Mafia-only chat messages
 }
 
 export const ROLE_INFO: Record<Role, { name: string; emoji: string; color: string; description: string }> = {

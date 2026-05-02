@@ -1,4 +1,4 @@
-import { GameState, generateRoomCode, generatePlayerId, distributeRoles, checkWinCondition, GamePhase } from './game-types';
+import { GameState, generateRoomCode, generatePlayerId, distributeRoles, checkWinCondition, GamePhase, MafiaChatMessage } from './game-types';
 import { Redis } from '@upstash/redis';
 
 const GAME_PREFIX = 'spygame:';
@@ -109,6 +109,7 @@ export async function createRoom(hostName: string): Promise<GameState> {
     isTie: false,
     revotes: {},
     justificationTime: 60,
+    mafiaChat: [],
   };
 
   await saveGame(game);
@@ -639,6 +640,8 @@ export async function advanceFromRoleReveal(code: string, hostId: string): Promi
   game.votes = {};
   game.nightActionsComplete = false;
   game.sniperDied = false;
+  // Clear mafia chat for new round
+  game.mafiaChat = [];
 
   await saveGame(game);
   return game;
@@ -672,6 +675,41 @@ export async function advanceToNight(code: string, hostId: string): Promise<Game
   game.votes = {};
   game.nightActionsComplete = false;
   game.sniperDied = false;
+  // Clear mafia chat for new round
+  game.mafiaChat = [];
+
+  await saveGame(game);
+  return game;
+}
+
+// ====== MAFIA CHAT - Private chat for mafia during night ======
+export async function sendMafiaChatMessage(code: string, playerId: string, message: string): Promise<GameState | { error: string }> {
+  const game = await getGame(code);
+  if (!game) return { error: 'الغرفة غير موجودة' };
+  if (game.phase !== 'night') return { error: 'الدردشة متاحة فقط في الليل' };
+
+  const player = game.players.find(p => p.id === playerId);
+  if (!player) return { error: 'اللاعب غير موجود' };
+  if (player.role !== 'mafia') return { error: 'فقط المافيا يمكنها الدردشة' };
+  if (!player.isAlive) return { error: 'أنت خارج اللعبة' };
+  if (!message.trim()) return { error: 'الرسالة فارغة' };
+  if (message.length > 500) return { error: 'الرسالة طويلة جداً' };
+
+  const chatMsg: MafiaChatMessage = {
+    id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    senderId: playerId,
+    senderName: player.name,
+    message: message.trim(),
+    timestamp: Date.now(),
+    round: game.round,
+  };
+
+  game.mafiaChat.push(chatMsg);
+
+  // Keep only last 100 messages per round to avoid Redis bloat
+  if (game.mafiaChat.length > 100) {
+    game.mafiaChat = game.mafiaChat.slice(-100);
+  }
 
   await saveGame(game);
   return game;
@@ -753,6 +791,15 @@ export async function getPublicGameState(code: string, playerId?: string): Promi
     accusedPlayers: game.accusedPlayers,
     isTie: game.isTie,
     justificationTime: game.justificationTime,
+    // Mafia chat: only mafia sees during night, host can see always
+    mafiaChat: (() => {
+      if (isHost) return game.mafiaChat;
+      if (game.phase === 'night' && playerId) {
+        const p = game.players.find(pl => pl.id === playerId);
+        if (p?.role === 'mafia') return game.mafiaChat;
+      }
+      return [];
+    })(),
   };
 
   // Host-specific: show all night action details
