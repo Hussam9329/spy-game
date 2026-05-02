@@ -475,6 +475,36 @@ export async function resolveVotes(code: string, hostId: string): Promise<GameSt
   return game;
 }
 
+// ====== ADVANCE FROM ROLE-REVEAL TO NIGHT (first round) ======
+export async function advanceFromRoleReveal(code: string, hostId: string): Promise<GameState | { error: string }> {
+  const game = await getGame(code);
+  if (!game) return { error: 'الغرفة غير موجودة' };
+  if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه المتابعة' };
+  if (game.phase !== 'role-reveal') return { error: 'ليس الوقت المناسب' };
+
+  // Clear any silenced state and transition to night
+  game.players.forEach(p => { p.isSilenced = false; });
+
+  game.phase = 'night';
+  game.nightActions = {
+    kills: [],
+    saves: [],
+    sniperTarget: undefined,
+    sniperShooter: undefined,
+    investigations: [],
+    mafiaVotes: {},
+    mafiaSilenceVotes: {},
+    doctorSaves: {},
+    investigatorChecks: {},
+  };
+  game.votes = {};
+  game.nightActionsComplete = false;
+  game.sniperDied = false;
+
+  await saveGame(game);
+  return game;
+}
+
 export async function advanceToNight(code: string, hostId: string): Promise<GameState | { error: string }> {
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };

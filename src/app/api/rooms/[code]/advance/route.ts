@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { resolveNight, advanceToDay, startVoting, resolveVotes, advanceToNight } from '@/lib/game-store';
+import { resolveNight, advanceToDay, startVoting, resolveVotes, advanceToNight, advanceFromRoleReveal } from '@/lib/game-store';
 
 export async function POST(
   request: NextRequest,
@@ -12,6 +12,12 @@ export async function POST(
 
     if (!hostId) {
       return NextResponse.json({ error: 'معرّف المراقب مطلوب' }, { status: 400 });
+    }
+
+    if (action === 'start-night') {
+      const result = await advanceFromRoleReveal(code, hostId);
+      if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
+      return NextResponse.json({ phase: result.phase, round: result.round });
     }
 
     if (action === 'resolve-night') {

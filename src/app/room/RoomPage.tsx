@@ -350,7 +350,7 @@ export default function RoomPage() {
         <p className="text-muted-foreground">أنت ترى كل الأدوار - انتظر حتى يكشف اللاعبون أدوارهم</p>
       </div>
       {renderAllRolesPanel()}
-      <Button onClick={() => handleAdvance('resolve-night')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
+      <Button onClick={() => handleAdvance('start-night')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
         🌙 الانتقال لليل
       </Button>
     </motion.div>
