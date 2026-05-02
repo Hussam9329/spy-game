@@ -1,39 +1,93 @@
-import { GameState, generateRoomCode, generatePlayerId, distributeRoles, checkWinCondition, NightActions, GamePhase } from './game-types';
+import { GameState, generateRoomCode, generatePlayerId, distributeRoles, checkWinCondition, GamePhase } from './game-types';
 
-// Try to import Upstash Redis
-let redis: any = null;
-try {
-  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
-    const { Redis } = require('@upstash/redis');
-    redis = new Redis({
-      url: process.env.KV_REST_API_URL,
-      token: process.env.KV_REST_API_TOKEN,
-    });
-  }
-} catch {
-  // Redis not available, will use in-memory fallback
-}
-
-// In-memory fallback for local development
-const games = new Map<string, GameState>();
+// Upstash Redis client
+import { Redis } from '@upstash/redis';
 
 const GAME_PREFIX = 'spygame:';
 const GAME_TTL = 86400; // 24 hours
 
-async function getGame(code: string): Promise<GameState | null> {
-  if (redis) {
-    const data = await redis.get<GameState>(`${GAME_PREFIX}${code}`);
-    return data;
+// Initialize Redis - supports both Vercel KV and direct Upstash env vars
+function createRedisClient(): Redis | null {
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  if (!url || !token) {
+    console.warn('[SpyGame] Redis not configured. Set KV_REST_API_URL/KV_REST_API_TOKEN or UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN environment variables.');
+    return null;
   }
+
+  try {
+    const redis = new Redis({ url, token });
+    console.log('[SpyGame] Redis connected successfully');
+    return redis;
+  } catch (err) {
+    console.error('[SpyGame] Failed to initialize Redis:', err);
+    return null;
+  }
+}
+
+// Lazy-initialize Redis so it's only created when first needed (important for Vercel)
+let _redis: Redis | null | undefined = undefined;
+
+function getRedis(): Redis | null {
+  if (_redis === undefined) {
+    _redis = createRedisClient();
+  }
+  return _redis;
+}
+
+// In-memory fallback ONLY for local development
+const games = new Map<string, GameState>();
+
+function isProduction(): boolean {
+  return process.env.NODE_ENV === 'production';
+}
+
+async function getGame(code: string): Promise<GameState | null> {
+  const redis = getRedis();
+  if (redis) {
+    try {
+      const data = await redis.get<GameState>(`${GAME_PREFIX}${code}`);
+      return data;
+    } catch (err) {
+      console.error('[SpyGame] Redis get error:', err);
+      if (isProduction()) return null;
+      // In development, fall back to in-memory
+      return games.get(code) || null;
+    }
+  }
+
+  if (isProduction()) {
+    console.error('[SpyGame] No Redis available in production! Room data cannot be persisted.');
+    return null;
+  }
+
   return games.get(code) || null;
 }
 
 async function saveGame(game: GameState): Promise<void> {
+  const redis = getRedis();
   if (redis) {
-    await redis.set(`${GAME_PREFIX}${game.code}`, game, { ex: GAME_TTL });
-  } else {
-    games.set(game.code, game);
+    try {
+      await redis.set(`${GAME_PREFIX}${game.code}`, game, { ex: GAME_TTL });
+      return;
+    } catch (err) {
+      console.error('[SpyGame] Redis set error:', err);
+      if (isProduction()) throw new Error('Failed to save game data. Please check Redis configuration.');
+      // In development, fall back to in-memory
+    }
   }
+
+  if (isProduction()) {
+    throw new Error('No Redis available in production! Cannot persist game data. Please set up Upstash Redis integration in Vercel.');
+  }
+
+  games.set(game.code, game);
+}
+
+// Check if Redis is configured
+export function isRedisConfigured(): boolean {
+  return getRedis() !== null;
 }
 
 export async function createRoom(hostName: string): Promise<GameState> {
@@ -89,7 +143,7 @@ export async function getRoom(code: string): Promise<GameState | null> {
 
 export async function joinRoom(code: string, playerName: string): Promise<GameState | { error: string }> {
   const game = await getGame(code);
-  if (!game) return { error: 'الغرفة غير موجودة' };
+  if (!game) return { error: 'الغرفة غير موجودة - تأكد من صحة الرمز' };
   if (game.phase !== 'waiting') return { error: 'اللعبة بدأت بالفعل' };
   if (game.players.length >= 12) return { error: 'الغرفة ممتلئة' };
   if (game.players.some(p => p.name === playerName)) return { error: 'الاسم مستخدم بالفعل' };

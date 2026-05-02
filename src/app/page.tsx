@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,6 +17,18 @@ export default function HomePage() {
   const [joinName, setJoinName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [redisStatus, setRedisStatus] = useState<'checking' | 'ok' | 'not_configured'>('checking');
+
+  useEffect(() => {
+    fetch('/api/health')
+      .then(res => res.json())
+      .then(data => {
+        setRedisStatus(data.redis === 'connected' ? 'ok' : 'not_configured');
+      })
+      .catch(() => {
+        setRedisStatus('not_configured');
+      });
+  }, []);
 
   const handleCreate = async () => {
     if (!hostName.trim()) {
@@ -130,6 +142,25 @@ export default function HomePage() {
             </CardContent>
           </Card>
         </motion.div>
+
+        {/* Redis status warning */}
+        {redisStatus === 'not_configured' && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <Card className="bg-yellow-950/30 border-yellow-800/50">
+              <CardContent className="p-4 text-center space-y-2">
+                <p className="text-yellow-400 font-bold text-sm">تحذير: قاعدة البيانات غير متصلة</p>
+                <p className="text-yellow-500/70 text-xs">
+                  الغرف لن تعمل بين الأجهزة المختلفة. يجب إعداد Upstash Redis في Vercel.
+                  <br />
+                  اذهب إلى Vercel Dashboard ← Storage ← Create Database ← Upstash Redis
+                </p>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
 
         {/* Action buttons / forms */}
         <AnimatePresence mode="wait">
