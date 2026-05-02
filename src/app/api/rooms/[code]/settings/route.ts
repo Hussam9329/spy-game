@@ -11,7 +11,7 @@ export async function POST(
     const { hostId, mafia, doctors, snipers, investigators, discussionTime } = body;
 
     if (!hostId) {
-      return NextResponse.json({ error: 'معرّف الهوست مطلوب' }, { status: 400 });
+      return NextResponse.json({ error: 'معرّف المراقب مطلوب' }, { status: 400 });
     }
 
     const result = await updateSettings(code, hostId, {
@@ -26,10 +26,7 @@ export async function POST(
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
 
-    return NextResponse.json({
-      settings: result.settings,
-      discussionTime: result.discussionTime,
-    });
+    return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: 'خطأ في تحديث الإعدادات' }, { status: 500 });
   }

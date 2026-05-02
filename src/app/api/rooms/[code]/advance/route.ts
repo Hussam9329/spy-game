@@ -11,47 +11,37 @@ export async function POST(
     const { hostId, action } = body;
 
     if (!hostId) {
-      return NextResponse.json({ error: 'معرّف الهوست مطلوب' }, { status: 400 });
+      return NextResponse.json({ error: 'معرّف المراقب مطلوب' }, { status: 400 });
     }
 
     if (action === 'resolve-night') {
       const result = await resolveNight(code, hostId);
-      if ('error' in result) {
-        return NextResponse.json({ error: result.error }, { status: 400 });
-      }
+      if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
       return NextResponse.json({
         phase: result.phase,
         lastNightKilled: result.lastNightKilled,
         lastNightSaved: result.lastNightSaved,
+        lastNightSilenced: result.lastNightSilenced,
+        sniperDied: result.sniperDied,
         winner: result.winner,
       });
     }
 
     if (action === 'advance-to-day') {
       const result = await advanceToDay(code, hostId);
-      if ('error' in result) {
-        return NextResponse.json({ error: result.error }, { status: 400 });
-      }
-      return NextResponse.json({
-        phase: result.phase,
-      });
+      if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
+      return NextResponse.json({ phase: result.phase });
     }
 
     if (action === 'start-voting') {
       const result = await startVoting(code, hostId);
-      if ('error' in result) {
-        return NextResponse.json({ error: result.error }, { status: 400 });
-      }
-      return NextResponse.json({
-        phase: result.phase,
-      });
+      if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
+      return NextResponse.json({ phase: result.phase });
     }
 
     if (action === 'resolve-votes') {
       const result = await resolveVotes(code, hostId);
-      if ('error' in result) {
-        return NextResponse.json({ error: result.error }, { status: 400 });
-      }
+      if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
       return NextResponse.json({
         phase: result.phase,
         lastVoteEliminated: result.lastVoteEliminated,
@@ -61,13 +51,8 @@ export async function POST(
 
     if (action === 'advance-to-night') {
       const result = await advanceToNight(code, hostId);
-      if ('error' in result) {
-        return NextResponse.json({ error: result.error }, { status: 400 });
-      }
-      return NextResponse.json({
-        phase: result.phase,
-        round: result.round,
-      });
+      if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
+      return NextResponse.json({ phase: result.phase, round: result.round });
     }
 
     return NextResponse.json({ error: 'إجراء غير معروف' }, { status: 400 });

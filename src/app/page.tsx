@@ -32,7 +32,7 @@ export default function HomePage() {
 
   const handleCreate = async () => {
     if (!hostName.trim()) {
-      setError('الرجاء إدخال اسمك');
+      setError('الرجاء إدخال اسمك كمراقب');
       return;
     }
     setLoading(true);
@@ -48,7 +48,6 @@ export default function HomePage() {
         setError(data.error);
         return;
       }
-      // Store player info in localStorage
       localStorage.setItem(`spygame_${data.code}`, JSON.stringify({
         playerId: data.hostId,
         code: data.code,
@@ -109,9 +108,9 @@ export default function HomePage() {
           transition={{ duration: 0.8, ease: 'easeOut' }}
           className="text-center"
         >
-          <div className="text-8xl mb-4 animate-float">🔍</div>
+          <div className="text-8xl mb-4 animate-float">🔫</div>
           <h1 className="text-6xl font-bold bg-gradient-to-l from-red-500 via-red-400 to-red-600 bg-clip-text text-transparent mb-3">
-            الجاسوس
+            مافيا
           </h1>
           <p className="text-xl text-muted-foreground">
             لعبة استنتاج اجتماعية
@@ -127,13 +126,13 @@ export default function HomePage() {
           <Card className="bg-card/50 backdrop-blur-sm border-red-900/20">
             <CardContent className="p-5 text-center">
               <p className="text-muted-foreground leading-relaxed text-sm">
-                🌙 في كل ليلة، تخرج المافيا لاصطياد ضحاياها...
+                🔴 المافيا تقتل وتسكّت كل ليلة...
                 <br />
-                💚 يتحرك الأطباء لإنقاذ من يستطيعون...
+                💚 الطبيب ينقذ من يستطيع...
                 <br />
-                🔵 يصوب القناص رصاصته الأخيرة...
+                🔵 القناص يخاطر بحياته مع كل رصاصة...
                 <br />
-                🟡 يبحث المحقق عن الحقيقة...
+                🟡 المحقق يبحث عن الحقيقة...
                 <br />
                 ☀️ وفي النهار، يقرر الجميع مصير المشتبه بهم!
                 <br />
@@ -145,17 +144,12 @@ export default function HomePage() {
 
         {/* Redis status warning */}
         {redisStatus === 'not_configured' && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
+          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
             <Card className="bg-yellow-950/30 border-yellow-800/50">
               <CardContent className="p-4 text-center space-y-2">
                 <p className="text-yellow-400 font-bold text-sm">تحذير: قاعدة البيانات غير متصلة</p>
                 <p className="text-yellow-500/70 text-xs">
                   الغرف لن تعمل بين الأجهزة المختلفة. يجب إعداد Upstash Redis في Vercel.
-                  <br />
-                  اذهب إلى Vercel Dashboard ← Storage ← Create Database ← Upstash Redis
                 </p>
               </CardContent>
             </Card>
@@ -165,68 +159,32 @@ export default function HomePage() {
         {/* Action buttons / forms */}
         <AnimatePresence mode="wait">
           {!showCreate && !showJoin ? (
-            <motion.div
-              key="buttons"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="flex flex-col gap-4 w-full"
-            >
-              <Button
-                onClick={() => setShowCreate(true)}
-                size="lg"
-                className="h-14 text-lg font-bold bg-gradient-to-l from-red-700 to-red-600 hover:from-red-600 hover:to-red-500 shadow-lg shadow-red-900/30 transition-all duration-300 hover:scale-105"
-              >
+            <motion.div key="buttons" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="flex flex-col gap-4 w-full">
+              <Button onClick={() => setShowCreate(true)} size="lg" className="h-14 text-lg font-bold bg-gradient-to-l from-red-700 to-red-600 hover:from-red-600 hover:to-red-500 shadow-lg shadow-red-900/30 transition-all duration-300 hover:scale-105">
                 🎮 إنشاء غرفة
               </Button>
-              <Button
-                onClick={() => setShowJoin(true)}
-                size="lg"
-                variant="outline"
-                className="h-14 text-lg font-bold border-red-900/40 text-red-400 hover:bg-red-950/30 hover:text-red-300 transition-all duration-300 hover:scale-105"
-              >
+              <Button onClick={() => setShowJoin(true)} size="lg" variant="outline" className="h-14 text-lg font-bold border-red-900/40 text-red-400 hover:bg-red-950/30 hover:text-red-300 transition-all duration-300 hover:scale-105">
                 🚪 انضمام لغرفة
               </Button>
             </motion.div>
           ) : showCreate ? (
-            <motion.div
-              key="create"
-              initial={{ opacity: 0, x: -30 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 30 }}
-              className="w-full"
-            >
+            <motion.div key="create" initial={{ opacity: 0, x: -30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 30 }} className="w-full">
               <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
                 <CardHeader>
                   <CardTitle className="text-center text-red-400">🎮 إنشاء غرفة جديدة</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="hostName" className="text-right block">اسمك</Label>
-                    <Input
-                      id="hostName"
-                      placeholder="أدخل اسمك..."
-                      value={hostName}
-                      onChange={(e) => setHostName(e.target.value)}
-                      className="text-right bg-input/50 border-red-900/30 focus:border-red-500"
-                      maxLength={20}
-                      onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                    />
+                    <Label htmlFor="hostName" className="text-right block">اسمك (مراقب)</Label>
+                    <Input id="hostName" placeholder="أدخل اسمك كمراقب..." value={hostName} onChange={(e) => setHostName(e.target.value)} className="text-right bg-input/50 border-red-900/30 focus:border-red-500" maxLength={20} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
                   </div>
+                  <p className="text-xs text-muted-foreground text-center">المراقب يتحكم بسير اللعبة ويرى كل الأدوار لكنه لا يلعب</p>
                   {error && <p className="text-red-400 text-sm text-center">{error}</p>}
                   <div className="flex gap-3">
-                    <Button
-                      onClick={handleCreate}
-                      disabled={loading}
-                      className="flex-1 bg-gradient-to-l from-red-700 to-red-600 hover:from-red-600 hover:to-red-500"
-                    >
+                    <Button onClick={handleCreate} disabled={loading} className="flex-1 bg-gradient-to-l from-red-700 to-red-600 hover:from-red-600 hover:to-red-500">
                       {loading ? 'جارٍ الإنشاء...' : 'إنشاء'}
                     </Button>
-                    <Button
-                      onClick={() => { setShowCreate(false); setError(''); }}
-                      variant="outline"
-                      className="border-red-900/40 text-muted-foreground"
-                    >
+                    <Button onClick={() => { setShowCreate(false); setError(''); }} variant="outline" className="border-red-900/40 text-muted-foreground">
                       رجوع
                     </Button>
                   </div>
@@ -234,13 +192,7 @@ export default function HomePage() {
               </Card>
             </motion.div>
           ) : (
-            <motion.div
-              key="join"
-              initial={{ opacity: 0, x: 30 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -30 }}
-              className="w-full"
-            >
+            <motion.div key="join" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} className="w-full">
               <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
                 <CardHeader>
                   <CardTitle className="text-center text-red-400">🚪 انضمام لغرفة</CardTitle>
@@ -248,41 +200,18 @@ export default function HomePage() {
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="roomCode" className="text-right block">رمز الغرفة</Label>
-                    <Input
-                      id="roomCode"
-                      placeholder="مثال: ABC123"
-                      value={joinCode}
-                      onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                      className="text-center text-lg tracking-widest font-mono bg-input/50 border-red-900/30 focus:border-red-500"
-                      maxLength={6}
-                    />
+                    <Input id="roomCode" placeholder="مثال: ABC123" value={joinCode} onChange={(e) => setJoinCode(e.target.value.toUpperCase())} className="text-center text-lg tracking-widest font-mono bg-input/50 border-red-900/30 focus:border-red-500" maxLength={6} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="playerName" className="text-right block">اسمك</Label>
-                    <Input
-                      id="playerName"
-                      placeholder="أدخل اسمك..."
-                      value={joinName}
-                      onChange={(e) => setJoinName(e.target.value)}
-                      className="text-right bg-input/50 border-red-900/30 focus:border-red-500"
-                      maxLength={20}
-                      onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
-                    />
+                    <Input id="playerName" placeholder="أدخل اسمك..." value={joinName} onChange={(e) => setJoinName(e.target.value)} className="text-right bg-input/50 border-red-900/30 focus:border-red-500" maxLength={20} onKeyDown={(e) => e.key === 'Enter' && handleJoin()} />
                   </div>
                   {error && <p className="text-red-400 text-sm text-center">{error}</p>}
                   <div className="flex gap-3">
-                    <Button
-                      onClick={handleJoin}
-                      disabled={loading}
-                      className="flex-1 bg-gradient-to-l from-red-700 to-red-600 hover:from-red-600 hover:to-red-500"
-                    >
+                    <Button onClick={handleJoin} disabled={loading} className="flex-1 bg-gradient-to-l from-red-700 to-red-600 hover:from-red-600 hover:to-red-500">
                       {loading ? 'جارٍ الانضمام...' : 'انضمام'}
                     </Button>
-                    <Button
-                      onClick={() => { setShowJoin(false); setError(''); }}
-                      variant="outline"
-                      className="border-red-900/40 text-muted-foreground"
-                    >
+                    <Button onClick={() => { setShowJoin(false); setError(''); }} variant="outline" className="border-red-900/40 text-muted-foreground">
                       رجوع
                     </Button>
                   </div>
@@ -292,14 +221,8 @@ export default function HomePage() {
           )}
         </AnimatePresence>
 
-        {/* Footer */}
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 1 }}
-          className="text-xs text-muted-foreground/50"
-        >
-          8-12 لاعب • اللعب الجماعي
+        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1 }} className="text-xs text-muted-foreground/50">
+          8-12 لاعب • اللعب الجماعي • مراقب يدير اللعبة
         </motion.p>
       </div>
     </div>

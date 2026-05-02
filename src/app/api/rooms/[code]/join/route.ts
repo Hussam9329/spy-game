@@ -19,7 +19,6 @@ export async function POST(
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
 
-    // Find the player that just joined
     const player = result.players.find(p => p.name === playerName.trim());
 
     return NextResponse.json({

@@ -8,6 +8,7 @@ export interface Player {
   role?: Role;
   isAlive: boolean;
   sniperUsed: boolean;
+  isSilenced?: boolean; // Silenced by mafia - can't vote during day
 }
 
 export interface GameSettings {
@@ -24,19 +25,21 @@ export interface InvestigationResult {
 }
 
 export interface NightActions {
-  kills: string[];        // target player IDs chosen by mafia
-  saves: string[];        // player IDs chosen by doctors to save
-  sniperTarget?: string;  // target player ID chosen by sniper
-  sniperShooter?: string; // which sniper shot
+  kills: string[];
+  saves: string[];
+  sniperTarget?: string;
+  sniperShooter?: string;
   investigations: InvestigationResult[];
-  mafiaVotes: Record<string, string>;  // mafiaId -> targetId
-  doctorSaves: Record<string, string>; // doctorId -> savedId
-  investigatorChecks: Record<string, string>; // investigatorId -> checkedId
+  mafiaVotes: Record<string, string>;        // mafiaId -> targetId (for kill)
+  mafiaSilenceVotes: Record<string, string>; // mafiaId -> targetId (for silence)
+  doctorSaves: Record<string, string>;
+  investigatorChecks: Record<string, string>;
 }
 
 export interface GameState {
   code: string;
   hostId: string;
+  hostName: string;             // Host name (host is not a player)
   players: Player[];
   settings: GameSettings;
   phase: GamePhase;
@@ -44,13 +47,15 @@ export interface GameState {
   nightActions: NightActions;
   votes: Record<string, string>; // voterId -> targetId (or 'skip')
   eliminatedPlayers: string[];
-  lastNightKilled: string[];     // player IDs killed last night (after saves)
-  lastNightSaved: string[];      // player IDs saved last night
-  lastNightSniped?: string;      // player ID sniped last night
-  lastVoteEliminated?: string;   // player ID eliminated by vote
+  lastNightKilled: string[];
+  lastNightSaved: string[];
+  lastNightSniped?: string;
+  lastNightSilenced: string[];   // Players silenced last night
+  lastVoteEliminated?: string;
   winner?: 'mafia' | 'citizens';
-  discussionTime: number;        // seconds for discussion
-  nightActionsComplete: boolean; // whether all night actions are done
+  discussionTime: number;
+  nightActionsComplete: boolean;
+  sniperDied?: boolean;           // True if sniper died from shooting a citizen
 }
 
 export const ROLE_INFO: Record<Role, { name: string; emoji: string; color: string; description: string }> = {
@@ -58,7 +63,7 @@ export const ROLE_INFO: Record<Role, { name: string; emoji: string; color: strin
     name: 'المافيا',
     emoji: '🔴',
     color: 'text-red-500',
-    description: 'أنت من المافيا! اختر ضحيتك كل ليلة. حاول البقاء مخفياً خلال النقاش',
+    description: 'أنت من المافيا! اختر ضحية للقتل وشخصاً لتسكيت كل ليلة. حاول البقاء مخفياً خلال النقاش',
   },
   doctor: {
     name: 'الطبيب',
@@ -70,7 +75,7 @@ export const ROLE_INFO: Record<Role, { name: string; emoji: string; color: strin
     name: 'القناص',
     emoji: '🔵',
     color: 'text-blue-500',
-    description: 'أنت القناص! لديك رصاصة واحدة فقط. اختر هدفك بحكمة',
+    description: 'أنت القناص! لديك رصاصة واحدة فقط. إذا أصبت مواطناً بريئاً ستموت معه! اختر هدفك بحكمة',
   },
   investigator: {
     name: 'المحقق',
@@ -122,6 +127,7 @@ export function distributeRoles(players: Player[], settings: GameSettings): Play
     role: roles[index],
     isAlive: true,
     sniperUsed: false,
+    isSilenced: false,
   }));
 }
 

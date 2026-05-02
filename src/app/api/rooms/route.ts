@@ -7,7 +7,7 @@ export async function POST(request: NextRequest) {
     const { hostName } = body;
 
     if (!hostName || typeof hostName !== 'string' || hostName.trim().length === 0) {
-      return NextResponse.json({ error: 'اسم الهوست مطلوب' }, { status: 400 });
+      return NextResponse.json({ error: 'اسم المراقب مطلوب' }, { status: 400 });
     }
 
     const game = await createRoom(hostName.trim());
@@ -15,6 +15,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       code: game.code,
       hostId: game.hostId,
+      hostName: game.hostName,
       players: game.players.map(p => ({ id: p.id, name: p.name })),
     });
   } catch {

@@ -11,7 +11,7 @@ export async function POST(
     const { hostId } = body;
 
     if (!hostId) {
-      return NextResponse.json({ error: 'معرّف الهوست مطلوب' }, { status: 400 });
+      return NextResponse.json({ error: 'معرّف المراقب مطلوب' }, { status: 400 });
     }
 
     const result = await startGame(code, hostId);
@@ -22,7 +22,7 @@ export async function POST(
     return NextResponse.json({
       phase: result.phase,
       round: result.round,
-      message: 'بدأت اللعبة! كل لاعب سيرى دوره الآن',
+      players: result.players.map(p => ({ id: p.id, name: p.name, role: p.role })),
     });
   } catch {
     return NextResponse.json({ error: 'خطأ في بدء اللعبة' }, { status: 500 });

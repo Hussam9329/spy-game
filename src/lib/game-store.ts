@@ -1,42 +1,30 @@
 import { GameState, generateRoomCode, generatePlayerId, distributeRoles, checkWinCondition, GamePhase } from './game-types';
-
-// Upstash Redis client
 import { Redis } from '@upstash/redis';
 
 const GAME_PREFIX = 'spygame:';
 const GAME_TTL = 86400; // 24 hours
 
-// Initialize Redis - supports both Vercel KV and direct Upstash env vars
 function createRedisClient(): Redis | null {
   const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-
   if (!url || !token) {
-    console.warn('[SpyGame] Redis not configured. Set KV_REST_API_URL/KV_REST_API_TOKEN or UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN environment variables.');
+    console.warn('[SpyGame] Redis not configured.');
     return null;
   }
-
   try {
-    const redis = new Redis({ url, token });
-    console.log('[SpyGame] Redis connected successfully');
-    return redis;
+    return new Redis({ url, token });
   } catch (err) {
     console.error('[SpyGame] Failed to initialize Redis:', err);
     return null;
   }
 }
 
-// Lazy-initialize Redis so it's only created when first needed (important for Vercel)
 let _redis: Redis | null | undefined = undefined;
-
 function getRedis(): Redis | null {
-  if (_redis === undefined) {
-    _redis = createRedisClient();
-  }
+  if (_redis === undefined) _redis = createRedisClient();
   return _redis;
 }
 
-// In-memory fallback ONLY for local development
 const games = new Map<string, GameState>();
 
 function isProduction(): boolean {
@@ -47,21 +35,14 @@ async function getGame(code: string): Promise<GameState | null> {
   const redis = getRedis();
   if (redis) {
     try {
-      const data = await redis.get<GameState>(`${GAME_PREFIX}${code}`);
-      return data;
+      return await redis.get<GameState>(`${GAME_PREFIX}${code}`);
     } catch (err) {
       console.error('[SpyGame] Redis get error:', err);
       if (isProduction()) return null;
-      // In development, fall back to in-memory
       return games.get(code) || null;
     }
   }
-
-  if (isProduction()) {
-    console.error('[SpyGame] No Redis available in production! Room data cannot be persisted.');
-    return null;
-  }
-
+  if (isProduction()) return null;
   return games.get(code) || null;
 }
 
@@ -73,23 +54,18 @@ async function saveGame(game: GameState): Promise<void> {
       return;
     } catch (err) {
       console.error('[SpyGame] Redis set error:', err);
-      if (isProduction()) throw new Error('Failed to save game data. Please check Redis configuration.');
-      // In development, fall back to in-memory
+      if (isProduction()) throw new Error('Failed to save game data.');
     }
   }
-
-  if (isProduction()) {
-    throw new Error('No Redis available in production! Cannot persist game data. Please set up Upstash Redis integration in Vercel.');
-  }
-
+  if (isProduction()) throw new Error('No Redis available in production!');
   games.set(game.code, game);
 }
 
-// Check if Redis is configured
 export function isRedisConfigured(): boolean {
   return getRedis() !== null;
 }
 
+// ====== CREATE ROOM - Host is a spectator, NOT a player ======
 export async function createRoom(hostName: string): Promise<GameState> {
   const code = generateRoomCode();
   const hostId = generatePlayerId();
@@ -97,13 +73,8 @@ export async function createRoom(hostName: string): Promise<GameState> {
   const game: GameState = {
     code,
     hostId,
-    players: [{
-      id: hostId,
-      name: hostName,
-      role: undefined,
-      isAlive: true,
-      sniperUsed: false,
-    }],
+    hostName: hostName,
+    players: [], // Host is NOT a player
     settings: {
       mafia: 2,
       doctors: 1,
@@ -119,6 +90,7 @@ export async function createRoom(hostName: string): Promise<GameState> {
       sniperShooter: undefined,
       investigations: [],
       mafiaVotes: {},
+      mafiaSilenceVotes: {},
       doctorSaves: {},
       investigatorChecks: {},
     },
@@ -127,10 +99,12 @@ export async function createRoom(hostName: string): Promise<GameState> {
     lastNightKilled: [],
     lastNightSaved: [],
     lastNightSniped: undefined,
+    lastNightSilenced: [],
     lastVoteEliminated: undefined,
     winner: undefined,
     discussionTime: 180,
     nightActionsComplete: false,
+    sniperDied: false,
   };
 
   await saveGame(game);
@@ -147,6 +121,7 @@ export async function joinRoom(code: string, playerName: string): Promise<GameSt
   if (game.phase !== 'waiting') return { error: 'اللعبة بدأت بالفعل' };
   if (game.players.length >= 12) return { error: 'الغرفة ممتلئة' };
   if (game.players.some(p => p.name === playerName)) return { error: 'الاسم مستخدم بالفعل' };
+  if (game.hostName === playerName) return { error: 'هذا الاسم محجوز للمراقب' };
 
   const playerId = generatePlayerId();
   game.players.push({
@@ -155,6 +130,7 @@ export async function joinRoom(code: string, playerName: string): Promise<GameSt
     role: undefined,
     isAlive: true,
     sniperUsed: false,
+    isSilenced: false,
   });
 
   await saveGame(game);
@@ -164,7 +140,7 @@ export async function joinRoom(code: string, playerName: string): Promise<GameSt
 export async function startGame(code: string, hostId: string): Promise<GameState | { error: string }> {
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
-  if (game.hostId !== hostId) return { error: 'فقط الهوست يمكنه بدء اللعبة' };
+  if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه بدء اللعبة' };
   if (game.phase !== 'waiting') return { error: 'اللعبة بدأت بالفعل' };
   if (game.players.length < 8) return { error: 'يجب أن يكون هناك 8 لاعبين على الأقل' };
 
@@ -182,7 +158,7 @@ export async function startGame(code: string, hostId: string): Promise<GameState
 export async function updateSettings(code: string, hostId: string, settings: { mafia: number; doctors: number; snipers: number; investigators: number; discussionTime?: number }): Promise<GameState | { error: string }> {
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
-  if (game.hostId !== hostId) return { error: 'فقط الهوست يمكنه تعديل الإعدادات' };
+  if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه تعديل الإعدادات' };
   if (game.phase !== 'waiting') return { error: 'لا يمكن تعديل الإعدادات بعد بدء اللعبة' };
 
   const totalSpecial = settings.mafia + settings.doctors + settings.snipers + settings.investigators;
@@ -203,10 +179,11 @@ export async function updateSettings(code: string, hostId: string, settings: { m
   return game;
 }
 
+// ====== NIGHT ACTIONS - Now includes 'silence' for mafia ======
 export async function submitNightAction(
   code: string,
   playerId: string,
-  action: { type: 'kill' | 'save' | 'shoot' | 'investigate'; targetId: string }
+  action: { type: 'kill' | 'save' | 'shoot' | 'investigate' | 'silence'; targetId: string }
 ): Promise<GameState | { error: string }> {
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
@@ -224,6 +201,12 @@ export async function submitNightAction(
     case 'kill':
       if (player.role !== 'mafia') return { error: 'فقط المافيا يمكنها القتل' };
       game.nightActions.mafiaVotes[playerId] = action.targetId;
+      break;
+
+    case 'silence':
+      if (player.role !== 'mafia') return { error: 'فقط المافيا يمكنها التسكيت' };
+      if (action.targetId === playerId) return { error: 'لا يمكنك تسكيت نفسك' };
+      game.nightActions.mafiaSilenceVotes[playerId] = action.targetId;
       break;
 
     case 'save':
@@ -250,9 +233,7 @@ export async function submitNightAction(
       break;
   }
 
-  // Check if all night actions are complete
   checkNightActionsComplete(game);
-
   await saveGame(game);
   return game;
 }
@@ -263,40 +244,58 @@ function checkNightActionsComplete(game: GameState): void {
   const aliveSnipers = game.players.filter(p => p.role === 'sniper' && p.isAlive && !p.sniperUsed);
   const aliveInvestigators = game.players.filter(p => p.role === 'investigator' && p.isAlive);
 
-  const allMafiaVoted = aliveMafia.every(m => game.nightActions.mafiaVotes[m.id]);
+  const allMafiaVotedKill = aliveMafia.every(m => game.nightActions.mafiaVotes[m.id]);
+  const allMafiaVotedSilence = aliveMafia.every(m => game.nightActions.mafiaSilenceVotes[m.id]);
   const allDoctorsSaved = aliveDoctors.every(d => game.nightActions.doctorSaves[d.id]);
   const allInvestigatorsChecked = aliveInvestigators.every(i => game.nightActions.investigatorChecks[i.id]);
-  const sniperActioned = aliveSnipers.length === 0 || game.nightActions.sniperTarget !== undefined || true;
+  const sniperActioned = aliveSnipers.length === 0 || game.nightActions.sniperTarget !== undefined;
 
-  game.nightActionsComplete = allMafiaVoted && allDoctorsSaved && allInvestigatorsChecked && sniperActioned;
+  game.nightActionsComplete = allMafiaVotedKill && allMafiaVotedSilence && allDoctorsSaved && allInvestigatorsChecked && sniperActioned;
 }
 
+// ====== RESOLVE NIGHT - Includes silencing and sniper penalty ======
 export async function resolveNight(code: string, hostId: string): Promise<GameState | { error: string }> {
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
-  if (game.hostId !== hostId) return { error: 'فقط الهوست يمكنه إنهاء الليل' };
+  if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه إنهاء الليل' };
   if (game.phase !== 'night') return { error: 'ليس الوقت المناسب' };
 
-  const mafiaVotes = game.nightActions.mafiaVotes;
-  const voteCounts: Record<string, number> = {};
-
-  Object.values(mafiaVotes).forEach(targetId => {
-    voteCounts[targetId] = (voteCounts[targetId] || 0) + 1;
+  // 1. Resolve mafia KILL (majority vote)
+  const mafiaKillVotes = game.nightActions.mafiaVotes;
+  const killVoteCounts: Record<string, number> = {};
+  Object.values(mafiaKillVotes).forEach(targetId => {
+    killVoteCounts[targetId] = (killVoteCounts[targetId] || 0) + 1;
   });
-
-  let maxVotes = 0;
+  let maxKillVotes = 0;
   let killTarget = '';
-  Object.entries(voteCounts).forEach(([targetId, count]) => {
-    if (count > maxVotes) {
-      maxVotes = count;
+  Object.entries(killVoteCounts).forEach(([targetId, count]) => {
+    if (count > maxKillVotes) {
+      maxKillVotes = count;
       killTarget = targetId;
     }
   });
 
+  // 2. Resolve mafia SILENCE (majority vote)
+  const mafiaSilenceVotes = game.nightActions.mafiaSilenceVotes;
+  const silenceVoteCounts: Record<string, number> = {};
+  Object.values(mafiaSilenceVotes).forEach(targetId => {
+    silenceVoteCounts[targetId] = (silenceVoteCounts[targetId] || 0) + 1;
+  });
+  let maxSilenceVotes = 0;
+  let silenceTarget = '';
+  Object.entries(silenceVoteCounts).forEach(([targetId, count]) => {
+    if (count > maxSilenceVotes) {
+      maxSilenceVotes = count;
+      silenceTarget = targetId;
+    }
+  });
+
+  // 3. Process kills and saves
   const killed: string[] = [];
   const saved: string[] = [];
-
   const doctorSaves = Object.values(game.nightActions.doctorSaves);
+
+  // Mafia kill
   if (killTarget) {
     if (doctorSaves.includes(killTarget)) {
       saved.push(killTarget);
@@ -305,32 +304,64 @@ export async function resolveNight(code: string, hostId: string): Promise<GameSt
     }
   }
 
+  // 4. Process sniper shot
   let sniped: string | undefined;
+  game.sniperDied = false;
+
   if (game.nightActions.sniperTarget) {
     const sniperPlayer = game.players.find(p => p.id === game.nightActions.sniperShooter);
     if (sniperPlayer && !sniperPlayer.sniperUsed) {
-      sniped = game.nightActions.sniperTarget;
+      const sniperTarget = game.nightActions.sniperTarget;
+      const targetPlayer = game.players.find(p => p.id === sniperTarget);
+
+      sniped = sniperTarget;
       sniperPlayer.sniperUsed = true;
+
       if (doctorSaves.includes(sniped)) {
+        // Doctor saved the sniper's target
         saved.push(sniped);
         sniped = undefined;
       } else {
+        // Target is hit
         killed.push(sniped);
+
+        // If target is NOT mafia, sniper dies too!
+        if (targetPlayer && targetPlayer.role !== 'mafia') {
+          game.sniperDied = true;
+          sniperPlayer.isAlive = false;
+          game.eliminatedPlayers.push(sniperPlayer.id);
+          killed.push(sniperPlayer.id);
+        }
       }
     }
   }
 
+  // 5. Apply deaths
   killed.forEach(playerId => {
     const player = game.players.find(p => p.id === playerId);
-    if (player) {
+    if (player && player.isAlive) {
       player.isAlive = false;
-      game.eliminatedPlayers.push(playerId);
+      if (!game.eliminatedPlayers.includes(playerId)) {
+        game.eliminatedPlayers.push(playerId);
+      }
     }
   });
 
-  game.lastNightKilled = killed;
+  // 6. Apply silencing (separate from kill - doctor can't prevent silence)
+  const silenced: string[] = [];
+  if (silenceTarget) {
+    const silencedPlayer = game.players.find(p => p.id === silenceTarget);
+    if (silencedPlayer && silencedPlayer.isAlive) {
+      silencedPlayer.isSilenced = true;
+      silenced.push(silenceTarget);
+    }
+  }
+
+  // 7. Update game state
+  game.lastNightKilled = [...new Set(killed)];
   game.lastNightSaved = saved;
   game.lastNightSniped = sniped;
+  game.lastNightSilenced = silenced;
   game.lastVoteEliminated = undefined;
 
   const winner = checkWinCondition(game);
@@ -348,7 +379,7 @@ export async function resolveNight(code: string, hostId: string): Promise<GameSt
 export async function advanceToDay(code: string, hostId: string): Promise<GameState | { error: string }> {
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
-  if (game.hostId !== hostId) return { error: 'فقط الهوست يمكنه المتابعة' };
+  if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه المتابعة' };
   if (game.phase !== 'night-result') return { error: 'ليس الوقت المناسب' };
 
   game.phase = 'day-discussion';
@@ -362,7 +393,7 @@ export async function advanceToDay(code: string, hostId: string): Promise<GameSt
 export async function startVoting(code: string, hostId: string): Promise<GameState | { error: string }> {
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
-  if (game.hostId !== hostId) return { error: 'فقط الهوست يمكنه بدء التصويت' };
+  if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه بدء التصويت' };
   if (game.phase !== 'day-discussion') return { error: 'ليس الوقت المناسب' };
 
   game.phase = 'day-voting';
@@ -380,6 +411,7 @@ export async function submitVote(code: string, playerId: string, targetId: strin
   const player = game.players.find(p => p.id === playerId);
   if (!player) return { error: 'اللاعب غير موجود' };
   if (!player.isAlive) return { error: 'لا يمكنك التصويت وأنت خارج اللعبة' };
+  if (player.isSilenced) return { error: 'أنت مسكّت ولا يمكنك التصويت هذه الجولة' };
 
   if (targetId !== 'skip') {
     const target = game.players.find(p => p.id === targetId);
@@ -396,7 +428,7 @@ export async function submitVote(code: string, playerId: string, targetId: strin
 export async function resolveVotes(code: string, hostId: string): Promise<GameState | { error: string }> {
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
-  if (game.hostId !== hostId) return { error: 'فقط الهوست يمكنه إنهاء التصويت' };
+  if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه إنهاء التصويت' };
   if (game.phase !== 'day-voting') return { error: 'ليس وقت التصويت' };
 
   const voteCounts: Record<string, number> = {};
@@ -446,8 +478,11 @@ export async function resolveVotes(code: string, hostId: string): Promise<GameSt
 export async function advanceToNight(code: string, hostId: string): Promise<GameState | { error: string }> {
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
-  if (game.hostId !== hostId) return { error: 'فقط الهوست يمكنه المتابعة' };
+  if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه المتابعة' };
   if (game.phase !== 'vote-result') return { error: 'ليس الوقت المناسب' };
+
+  // Clear silenced state
+  game.players.forEach(p => { p.isSilenced = false; });
 
   game.phase = 'night';
   game.round += 1;
@@ -458,11 +493,13 @@ export async function advanceToNight(code: string, hostId: string): Promise<Game
     sniperShooter: undefined,
     investigations: [],
     mafiaVotes: {},
+    mafiaSilenceVotes: {},
     doctorSaves: {},
     investigatorChecks: {},
   };
   game.votes = {};
   game.nightActionsComplete = false;
+  game.sniperDied = false;
 
   await saveGame(game);
   return game;
@@ -480,19 +517,34 @@ export async function getPlayerInvestigation(code: string, playerId: string): Pr
   return { isMafia: investigation.isMafia };
 }
 
-// Get public game state (without revealing secrets)
-export async function getPublicGameState(code: string, playerId?: string): Promise<Partial<GameState> & { playerRole?: string; playerInvestigation?: { isMafia: boolean } | null; mafiaBuddies?: string[] } | null> {
+// ====== PUBLIC GAME STATE - Host sees everything ======
+export async function getPublicGameState(code: string, playerId?: string): Promise<Partial<GameState> & {
+  playerRole?: string;
+  playerSniperUsed?: boolean;
+  playerIsAlive?: boolean;
+  playerIsSilenced?: boolean;
+  mafiaBuddies?: string[];
+  playerInvestigation?: { isMafia: boolean } | null;
+  isHost?: boolean;
+  hostName?: string;
+} | null> {
   const game = await getGame(code);
   if (!game) return null;
+
+  const isHost = playerId === game.hostId;
 
   const base: any = {
     code: game.code,
     hostId: game.hostId,
+    hostName: game.hostName,
+    isHost,
     players: game.players.map(p => ({
       id: p.id,
       name: p.name,
       isAlive: p.isAlive,
-      role: game.phase === 'gameover' ? p.role : undefined,
+      isSilenced: p.isSilenced,
+      // Host sees all roles, players only see in gameover
+      role: (isHost || game.phase === 'gameover') ? p.role : undefined,
     })),
     settings: game.settings,
     phase: game.phase,
@@ -501,21 +553,36 @@ export async function getPublicGameState(code: string, playerId?: string): Promi
     lastNightKilled: game.lastNightKilled,
     lastNightSaved: game.lastNightSaved,
     lastNightSniped: game.lastNightSniped,
+    lastNightSilenced: game.lastNightSilenced,
     lastVoteEliminated: game.lastVoteEliminated,
     winner: game.winner,
     discussionTime: game.discussionTime,
     nightActionsComplete: game.nightActionsComplete,
+    sniperDied: game.sniperDied,
     votes: game.phase === 'day-voting' || game.phase === 'vote-result'
       ? game.votes
       : {},
   };
 
-  if (playerId) {
+  // Host-specific: show all night action details
+  if (isHost && game.phase === 'night') {
+    base.nightActionDetails = {
+      mafiaVotes: game.nightActions.mafiaVotes,
+      mafiaSilenceVotes: game.nightActions.mafiaSilenceVotes,
+      doctorSaves: game.nightActions.doctorSaves,
+      sniperTarget: game.nightActions.sniperTarget,
+      sniperShooter: game.nightActions.sniperShooter,
+      investigatorChecks: game.nightActions.investigatorChecks,
+    };
+  }
+
+  if (playerId && !isHost) {
     const player = game.players.find(p => p.id === playerId);
     if (player) {
       base.playerRole = player.role;
       base.playerSniperUsed = player.sniperUsed;
       base.playerIsAlive = player.isAlive;
+      base.playerIsSilenced = player.isSilenced;
 
       if (player.role === 'mafia') {
         base.mafiaBuddies = game.players
