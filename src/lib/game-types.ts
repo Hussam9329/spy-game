@@ -1,6 +1,6 @@
 export type Role = 'mafia' | 'doctor' | 'sniper' | 'investigator' | 'citizen';
 
-export type GamePhase = 'waiting' | 'role-reveal' | 'night' | 'night-result' | 'day-discussion' | 'day-voting' | 'vote-result' | 'justification' | 'day-revoting' | 'final-vote-result' | 'gameover';
+export type GamePhase = 'waiting' | 'role-reveal' | 'initial-discussion' | 'night' | 'night-result' | 'day-discussion' | 'day-voting' | 'vote-result' | 'justification' | 'day-revoting' | 'final-vote-result' | 'gameover';
 
 export interface Player {
   id: string;
@@ -95,6 +95,8 @@ export interface GameState {
   justificationChat: JustificationChatMessage[];  // Text-based justification chat
   isBotHost: boolean;             // Whether the host is a bot (auto-advance)
   lastDoctorSaveTargets: Record<string, string>; // doctorId -> last saved playerId (for consecutive save prevention)
+  currentJustifierIndex: number;   // Index of current justifying accused player (for sequential justification)
+  isFirstDiscussion: boolean;      // Whether this is the initial discussion before first night
 }
 
 export const ROLE_INFO: Record<Role, { name: string; emoji: string; color: string; description: string }> = {

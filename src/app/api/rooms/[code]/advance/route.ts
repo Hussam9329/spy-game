@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { resolveNight, advanceToDay, startVoting, resolveVotes, advanceToNight, advanceFromRoleReveal, startJustification, startRevote, resolveFinalVotes } from '@/lib/game-store';
+import { resolveNight, advanceToDay, startVoting, resolveVotes, advanceToNight, advanceFromRoleReveal, startJustification, startRevote, resolveFinalVotes, advanceJustifier } from '@/lib/game-store';
 
 export async function POST(
   request: NextRequest,
@@ -15,6 +15,7 @@ export async function POST(
     }
 
     if (action === 'start-night') {
+      // MODIFICATION 4: From role-reveal, go to initial-discussion instead of night
       const result = await advanceFromRoleReveal(code, hostId);
       if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
       return NextResponse.json({ phase: result.phase, round: result.round });
@@ -57,11 +58,17 @@ export async function POST(
       });
     }
 
-    // ====== NEW: Justification & Revote actions ======
     if (action === 'start-justification') {
       const result = await startJustification(code, hostId);
       if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
       return NextResponse.json({ phase: result.phase });
+    }
+
+    // MODIFICATION 2: Advance to next justifier
+    if (action === 'advance-justifier') {
+      const result = await advanceJustifier(code, hostId);
+      if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
+      return NextResponse.json({ phase: result.phase, currentJustifierIndex: result.currentJustifierIndex });
     }
 
     if (action === 'start-revote') {

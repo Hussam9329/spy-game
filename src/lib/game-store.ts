@@ -116,6 +116,8 @@ export async function createRoom(hostName: string, options?: { isBotHost?: boole
     justificationChat: [],
     isBotHost: options?.isBotHost || false,
     lastDoctorSaveTargets: {},
+    currentJustifierIndex: 0,
+    isFirstDiscussion: false,
   };
 
   await saveGame(game);
@@ -413,6 +415,10 @@ export async function resolveNight(code: string, hostId: string): Promise<GameSt
   game.lastNightSilenced = silenced;
   game.lastVoteEliminated = undefined;
 
+  // MODIFICATION 7: Don't set sniperDied publicly - just add sniper to killed list normally
+  // The sniperDied flag is kept for host-only information
+  // Sniper death is announced like any other death, without revealing role
+
   const winner = checkWinCondition(game);
   if (winner) {
     game.phase = 'gameover';
@@ -443,8 +449,10 @@ export async function startVoting(code: string, hostId: string): Promise<GameSta
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
   if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه بدء التصويت' };
-  if (game.phase !== 'day-discussion') return { error: 'ليس الوقت المناسب' };
+  // MODIFICATION 4: Allow starting voting from initial-discussion too
+  if (game.phase !== 'day-discussion' && game.phase !== 'initial-discussion') return { error: 'ليس الوقت المناسب' };
 
+  game.isFirstDiscussion = false;
   game.phase = 'day-voting';
   game.votes = {};
   game.votingTimerStartedAt = Date.now();
@@ -461,11 +469,13 @@ export async function submitVote(code: string, playerId: string, targetId: strin
   const player = game.players.find(p => p.id === playerId);
   if (!player) return { error: 'اللاعب غير موجود' };
   if (!player.isAlive) return { error: 'لا يمكنك التصويت وأنت خارج اللعبة' };
-  if (targetId !== 'skip') {
-    const target = game.players.find(p => p.id === targetId);
-    if (!target) return { error: 'الهدف غير موجود' };
-    if (!target.isAlive) return { error: 'لا يمكنك التصويت ضد لاعب خارج اللعبة' };
-  }
+
+  // MODIFICATION 3: Remove skip option - must vote for a player
+  if (targetId === 'skip') return { error: 'يجب اختيار لاعب للتصويت' };
+
+  const target = game.players.find(p => p.id === targetId);
+  if (!target) return { error: 'الهدف غير موجود' };
+  if (!target.isAlive) return { error: 'لا يمكنك التصويت ضد لاعب خارج اللعبة' };
 
   // BUG FIX 4: Prevent self-voting
   if (targetId === playerId) return { error: 'لا يمكنك التصويت ضد نفسك' };
@@ -488,9 +498,8 @@ export async function resolveVotes(code: string, hostId: string): Promise<GameSt
 
   const voteCounts: Record<string, number> = {};
   Object.values(game.votes).forEach(targetId => {
-    if (targetId !== 'skip') {
-      voteCounts[targetId] = (voteCounts[targetId] || 0) + 1;
-    }
+    // MODIFICATION 3: No skip option anymore
+    voteCounts[targetId] = (voteCounts[targetId] || 0) + 1;
   });
 
   let maxVotes = 0;
@@ -506,7 +515,7 @@ export async function resolveVotes(code: string, hostId: string): Promise<GameSt
     }
   });
 
-  // No votes or all skipped
+  // No votes
   if (topPlayers.length === 0 || maxVotes === 0) {
     game.accusedPlayers = [];
     game.isTie = false;
@@ -535,8 +544,34 @@ export async function startJustification(code: string, hostId: string): Promise<
   if (game.phase !== 'vote-result') return { error: 'ليس الوقت المناسب' };
   if (game.accusedPlayers.length === 0) return { error: 'لا يوجد متهمون للتبرير' };
 
+  // MODIFICATION 2: Sequential justification - start with first accused
   game.phase = 'justification';
   game.justificationChat = [];
+  game.currentJustifierIndex = 0;
+
+  await saveGame(game);
+  return game;
+}
+
+// ====== ADVANCE JUSTIFIER - Move to next accused player ======
+export async function advanceJustifier(code: string, hostId: string): Promise<GameState | { error: string }> {
+  const game = await getGame(code);
+  if (!game) return { error: 'الغرفة غير موجودة' };
+  if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه المتابعة' };
+  if (game.phase !== 'justification') return { error: 'ليس وقت التبرير' };
+  if (game.accusedPlayers.length === 0) return { error: 'لا يوجد متهمون' };
+
+  const nextIndex = game.currentJustifierIndex + 1;
+  if (nextIndex >= game.accusedPlayers.length) {
+    // All accused have justified, move to revote
+    game.phase = 'day-revoting';
+    game.revotes = {};
+    game.votingTimerStartedAt = Date.now();
+  } else {
+    // Move to next justifier
+    game.currentJustifierIndex = nextIndex;
+    game.justificationChat = [];
+  }
 
   await saveGame(game);
   return game;
@@ -569,11 +604,11 @@ export async function submitRevote(code: string, playerId: string, targetId: str
   if (!player.isAlive) return { error: 'لا يمكنك التصويت وأنت خارج اللعبة' };
 
   // Accused CAN vote in revote, but NOT on themselves
-  if (targetId !== 'skip') {
-    if (targetId === playerId) return { error: 'لا يمكنك التصويت ضد نفسك' };
-    const target = game.players.find(p => p.id === targetId);
-    if (!target || !target.isAlive) return { error: 'الهدف غير صالح' };
-  }
+  // MODIFICATION 3: Remove skip option - must vote for a player
+  if (targetId === 'skip') return { error: 'يجب اختيار لاعب للتصويت' };
+  if (targetId === playerId) return { error: 'لا يمكنك التصويت ضد نفسك' };
+  const target = game.players.find(p => p.id === targetId);
+  if (!target || !target.isAlive) return { error: 'الهدف غير صالح' };
 
   // BUG FIX 6: Prevent changing revote
   if (game.revotes[playerId]) return { error: 'لقد صوّت بالفعل ولا يمكنه تغيير صوته' };
@@ -593,9 +628,8 @@ export async function resolveFinalVotes(code: string, hostId: string): Promise<G
 
   const voteCounts: Record<string, number> = {};
   Object.values(game.revotes).forEach(targetId => {
-    if (targetId !== 'skip') {
-      voteCounts[targetId] = (voteCounts[targetId] || 0) + 1;
-    }
+    // MODIFICATION 3: No skip option anymore
+    voteCounts[targetId] = (voteCounts[targetId] || 0) + 1;
   });
 
   let maxVotes = 0;
@@ -646,27 +680,14 @@ export async function advanceFromRoleReveal(code: string, hostId: string): Promi
   if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه المتابعة' };
   if (game.phase !== 'role-reveal') return { error: 'ليس الوقت المناسب' };
 
-  // Clear any silenced state and transition to night
+  // Clear any silenced state and transition to initial discussion
   game.players.forEach(p => { p.isSilenced = false; });
 
-  game.phase = 'night';
-  game.nightActions = {
-    kills: [],
-    saves: [],
-    sniperTarget: undefined,
-    sniperShooter: undefined,
-    investigations: [],
-    mafiaVotes: {},
-    mafiaSilenceVotes: {},
-    doctorSaves: {},
-    investigatorChecks: {},
-  };
+  // MODIFICATION 4: Add initial discussion phase before first night
+  game.phase = 'initial-discussion';
+  game.isFirstDiscussion = true;
+  game.publicChat = [];
   game.votes = {};
-  game.nightActionsComplete = false;
-  game.sniperDied = false;
-  // Clear mafia chat for new round
-  game.mafiaChat = [];
-  game.justificationChat = [];
 
   await saveGame(game);
   return game;
@@ -747,7 +768,7 @@ export async function sendPublicChatMessage(code: string, playerId: string, mess
   if (!game) return { error: 'الغرفة غير موجودة' };
 
   // Public chat available during day phases
-  const dayPhases: GamePhase[] = ['day-discussion', 'day-voting', 'vote-result', 'justification', 'day-revoting', 'final-vote-result'];
+  const dayPhases: GamePhase[] = ['initial-discussion', 'day-discussion', 'day-voting', 'vote-result', 'justification', 'day-revoting', 'final-vote-result'];
   if (!dayPhases.includes(game.phase)) return { error: 'الدردشة العامة متاحة فقط خلال النهار' };
 
   const player = game.players.find(p => p.id === playerId);
@@ -788,7 +809,10 @@ export async function sendJustificationMessage(code: string, playerId: string, m
   if (!player.isAlive) return { error: 'أنت خارج اللعبة' };
 
   // Only accused players can send justification messages
+  // MODIFICATION 2: Only the current justifier can send messages
   if (!game.accusedPlayers.includes(playerId)) return { error: 'فقط المتهم يمكنه التبرير' };
+  const currentJustifierId = game.accusedPlayers[game.currentJustifierIndex];
+  if (playerId !== currentJustifierId) return { error: 'ليس دورك للتبرير الآن' };
 
   if (!message.trim()) return { error: 'الرسالة فارغة' };
   if (message.length > 1000) return { error: 'الرسالة طويلة جداً' };
@@ -866,7 +890,8 @@ export async function getPublicGameState(code: string, playerId?: string): Promi
     votingTime: game.votingTime,
     votingTimerStartedAt: game.votingTimerStartedAt,
     nightActionsComplete: game.nightActionsComplete,
-    sniperDied: game.sniperDied,
+    // MODIFICATION 7: sniperDied is host-only info, not revealed to players
+    sniperDied: isHost ? game.sniperDied : false,
     isBotHost: game.isBotHost,
     // BUG FIX 1+2: Hide individual votes from players - only host sees full votes
     // Players only see: total count and their own vote
@@ -887,9 +912,24 @@ export async function getPublicGameState(code: string, playerId?: string): Promi
     revoteCount: (game.phase === 'day-revoting' || game.phase === 'final-vote-result')
       ? Object.keys(game.revotes).length
       : 0,
+    // MODIFICATION 1: Live vote statistics - how many votes each player received
+    voteStats: (game.phase === 'day-voting' || game.phase === 'vote-result')
+      ? Object.values(game.votes).reduce((acc, targetId) => {
+          acc[targetId] = (acc[targetId] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>)
+      : {},
+    revoteStats: (game.phase === 'day-revoting' || game.phase === 'final-vote-result')
+      ? Object.values(game.revotes).reduce((acc, targetId) => {
+          acc[targetId] = (acc[targetId] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>)
+      : {},
     accusedPlayers: game.accusedPlayers,
     isTie: game.isTie,
     justificationTime: game.justificationTime,
+    currentJustifierIndex: game.currentJustifierIndex,
+    isFirstDiscussion: game.isFirstDiscussion,
     // Mafia chat: only mafia sees during night, host can see always
     mafiaChat: (() => {
       if (isHost) return game.mafiaChat;
@@ -903,7 +943,7 @@ export async function getPublicGameState(code: string, playerId?: string): Promi
     publicChat: (() => {
       if (isHost) return game.publicChat;
       // Players see public chat during day phases
-      const dayPhases: GamePhase[] = ['day-discussion', 'day-voting', 'vote-result', 'justification', 'day-revoting', 'final-vote-result'];
+      const dayPhases: GamePhase[] = ['initial-discussion', 'day-discussion', 'day-voting', 'vote-result', 'justification', 'day-revoting', 'final-vote-result'];
       if (dayPhases.includes(game.phase)) return game.publicChat;
       return [];
     })(),
