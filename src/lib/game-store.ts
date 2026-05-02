@@ -105,6 +105,10 @@ export async function createRoom(hostName: string): Promise<GameState> {
     discussionTime: 180,
     nightActionsComplete: false,
     sniperDied: false,
+    accusedPlayers: [],
+    isTie: false,
+    revotes: {},
+    justificationTime: 60,
   };
 
   await saveGame(game);
@@ -425,6 +429,7 @@ export async function submitVote(code: string, playerId: string, targetId: strin
   return game;
 }
 
+// ====== RESOLVE FIRST VOTE - Find accused players, NO direct elimination ======
 export async function resolveVotes(code: string, hostId: string): Promise<GameState | { error: string }> {
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
@@ -433,6 +438,106 @@ export async function resolveVotes(code: string, hostId: string): Promise<GameSt
 
   const voteCounts: Record<string, number> = {};
   Object.values(game.votes).forEach(targetId => {
+    if (targetId !== 'skip') {
+      voteCounts[targetId] = (voteCounts[targetId] || 0) + 1;
+    }
+  });
+
+  let maxVotes = 0;
+  const topPlayers: string[] = [];
+
+  Object.entries(voteCounts).forEach(([targetId, count]) => {
+    if (count > maxVotes) {
+      maxVotes = count;
+      topPlayers.length = 0;
+      topPlayers.push(targetId);
+    } else if (count === maxVotes) {
+      topPlayers.push(targetId);
+    }
+  });
+
+  // No votes or all skipped
+  if (topPlayers.length === 0 || maxVotes === 0) {
+    game.accusedPlayers = [];
+    game.isTie = false;
+    game.lastVoteEliminated = undefined;
+    game.phase = 'vote-result';
+    await saveGame(game);
+    return game;
+  }
+
+  game.accusedPlayers = topPlayers;
+  game.isTie = topPlayers.length > 1;
+
+  // Move to vote-result first (show who got most votes)
+  game.phase = 'vote-result';
+  game.lastVoteEliminated = undefined;
+
+  await saveGame(game);
+  return game;
+}
+
+// ====== START JUSTIFICATION - Accused players defend themselves ======
+export async function startJustification(code: string, hostId: string): Promise<GameState | { error: string }> {
+  const game = await getGame(code);
+  if (!game) return { error: 'الغرفة غير موجودة' };
+  if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه بدء التبرير' };
+  if (game.phase !== 'vote-result') return { error: 'ليس الوقت المناسب' };
+  if (game.accusedPlayers.length === 0) return { error: 'لا يوجد متهمون للتبرير' };
+
+  game.phase = 'justification';
+
+  await saveGame(game);
+  return game;
+}
+
+// ====== START REVOTE - After justification, revote on accused only ======
+export async function startRevote(code: string, hostId: string): Promise<GameState | { error: string }> {
+  const game = await getGame(code);
+  if (!game) return { error: 'الغرفة غير موجودة' };
+  if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه بدء إعادة التصويت' };
+  if (game.phase !== 'justification') return { error: 'ليس الوقت المناسب' };
+  if (game.accusedPlayers.length === 0) return { error: 'لا يوجد متهمون' };
+
+  game.phase = 'day-revoting';
+  game.revotes = {};
+
+  await saveGame(game);
+  return game;
+}
+
+// ====== SUBMIT REVOTE - Players vote on accused only ======
+export async function submitRevote(code: string, playerId: string, targetId: string): Promise<GameState | { error: string }> {
+  const game = await getGame(code);
+  if (!game) return { error: 'الغرفة غير موجودة' };
+  if (game.phase !== 'day-revoting') return { error: 'ليس وقت إعادة التصويت' };
+
+  const player = game.players.find(p => p.id === playerId);
+  if (!player) return { error: 'اللاعب غير موجود' };
+  if (!player.isAlive) return { error: 'لا يمكنك التصويت وأنت خارج اللعبة' };
+  if (player.isSilenced) return { error: 'أنت مسكّت ولا يمكنك التصويت هذه الجولة' };
+
+  if (targetId !== 'skip') {
+    if (!game.accusedPlayers.includes(targetId)) return { error: 'يمكنك التصويت فقط على المتهمين' };
+    const target = game.players.find(p => p.id === targetId);
+    if (!target || !target.isAlive) return { error: 'الهدف غير صالح' };
+  }
+
+  game.revotes[playerId] = targetId;
+
+  await saveGame(game);
+  return game;
+}
+
+// ====== RESOLVE FINAL VOTE - After revote, actually eliminate ======
+export async function resolveFinalVotes(code: string, hostId: string): Promise<GameState | { error: string }> {
+  const game = await getGame(code);
+  if (!game) return { error: 'الغرفة غير موجودة' };
+  if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه إنهاء التصويت' };
+  if (game.phase !== 'day-revoting') return { error: 'ليس وقت إعادة التصويت' };
+
+  const voteCounts: Record<string, number> = {};
+  Object.values(game.revotes).forEach(targetId => {
     if (targetId !== 'skip') {
       voteCounts[targetId] = (voteCounts[targetId] || 0) + 1;
     }
@@ -452,23 +557,27 @@ export async function resolveVotes(code: string, hostId: string): Promise<GameSt
     }
   });
 
-  if (tie || !eliminated || maxVotes === 0) {
-    game.lastVoteEliminated = undefined;
-  } else {
+  // Only eliminate if clear majority (no tie)
+  if (!tie && eliminated && maxVotes > 0) {
     const player = game.players.find(p => p.id === eliminated);
     if (player) {
       player.isAlive = false;
       game.eliminatedPlayers.push(eliminated);
       game.lastVoteEliminated = eliminated;
     }
+  } else {
+    game.lastVoteEliminated = undefined;
   }
+
+  game.accusedPlayers = [];
+  game.isTie = false;
 
   const winner = checkWinCondition(game);
   if (winner) {
     game.phase = 'gameover';
     game.winner = winner;
   } else {
-    game.phase = 'vote-result';
+    game.phase = 'final-vote-result';
   }
 
   await saveGame(game);
@@ -509,7 +618,10 @@ export async function advanceToNight(code: string, hostId: string): Promise<Game
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
   if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه المتابعة' };
-  if (game.phase !== 'vote-result') return { error: 'ليس الوقت المناسب' };
+  // Allow advancing from both 'final-vote-result' and 'vote-result' (when no accused)
+  if (game.phase !== 'final-vote-result' && game.phase !== 'vote-result') return { error: 'ليس الوقت المناسب' };
+  // If in vote-result phase, ensure there are no accused players
+  if (game.phase === 'vote-result' && game.accusedPlayers.length > 0) return { error: 'يجب إكمال عملية التبرير أولاً' };
 
   // Clear silenced state
   game.players.forEach(p => { p.isSilenced = false; });
@@ -592,6 +704,12 @@ export async function getPublicGameState(code: string, playerId?: string): Promi
     votes: game.phase === 'day-voting' || game.phase === 'vote-result'
       ? game.votes
       : {},
+    revotes: game.phase === 'day-revoting' || game.phase === 'final-vote-result'
+      ? game.revotes
+      : {},
+    accusedPlayers: game.accusedPlayers,
+    isTie: game.isTie,
+    justificationTime: game.justificationTime,
   };
 
   // Host-specific: show all night action details

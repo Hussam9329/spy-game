@@ -1,6 +1,6 @@
 export type Role = 'mafia' | 'doctor' | 'sniper' | 'investigator' | 'citizen';
 
-export type GamePhase = 'waiting' | 'role-reveal' | 'night' | 'night-result' | 'day-discussion' | 'day-voting' | 'vote-result' | 'gameover';
+export type GamePhase = 'waiting' | 'role-reveal' | 'night' | 'night-result' | 'day-discussion' | 'day-voting' | 'vote-result' | 'justification' | 'day-revoting' | 'final-vote-result' | 'gameover';
 
 export interface Player {
   id: string;
@@ -56,6 +56,10 @@ export interface GameState {
   discussionTime: number;
   nightActionsComplete: boolean;
   sniperDied?: boolean;           // True if sniper died from shooting a citizen
+  accusedPlayers: string[];       // Players who got most votes and need to justify
+  isTie: boolean;                 // Whether there's a tie in the vote
+  revotes: Record<string, string>; // voterId -> targetId (or 'skip') for revote
+  justificationTime: number;      // Time in seconds for justification (default 60)
 }
 
 export const ROLE_INFO: Record<Role, { name: string; emoji: string; color: string; description: string }> = {

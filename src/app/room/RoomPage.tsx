@@ -57,6 +57,10 @@ interface GameStateView {
   playerInvestigation?: { isMafia: boolean } | null;
   votes?: Record<string, string>;
   nightActionDetails?: NightActionDetails;
+  accusedPlayers?: string[];
+  isTie?: boolean;
+  revotes?: Record<string, string>;
+  justificationTime?: number;
 }
 
 export default function RoomPage() {
@@ -75,6 +79,9 @@ export default function RoomPage() {
   const [discussionTimer, setDiscussionTimer] = useState(0);
   const [voteTarget, setVoteTarget] = useState('');
   const [settingsForm, setSettingsForm] = useState({ mafia: 2, doctors: 1, snipers: 1, investigators: 1, discussionTime: 180 });
+  const [justificationTimer, setJustificationTimer] = useState(0);
+  const [revoteTarget, setRevoteTarget] = useState('');
+  const [currentJustifier, setCurrentJustifier] = useState(0);
 
   const isHost = game?.isHost === true;
 
@@ -124,12 +131,27 @@ export default function RoomPage() {
   }, [game?.phase, game?.discussionTime, game?.round]);
 
   useEffect(() => {
+    if (game?.phase === 'justification' && game.justificationTime) {
+      setJustificationTimer(game.justificationTime);
+      const timer = setInterval(() => {
+        setJustificationTimer(prev => {
+          if (prev <= 1) { clearInterval(timer); return 0; }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [game?.phase, game?.justificationTime]);
+
+  useEffect(() => {
     if (game?.phase === 'night') {
       setKillTarget('');
       setSilenceTarget('');
       setInvestigationResult(null);
     }
     if (game?.phase === 'day-voting') setVoteTarget('');
+    if (game?.phase === 'day-revoting') setRevoteTarget('');
+    if (game?.phase === 'justification') { setCurrentJustifier(0); setJustificationTimer(0); }
   }, [game?.phase, game?.round]);
 
   const apiCall = async (url: string, body: Record<string, unknown>) => {
@@ -169,6 +191,11 @@ export default function RoomPage() {
   const handleVote = () => {
     if (!voteTarget) return;
     apiCall(`/api/rooms/${code}/vote`, { playerId, targetId: voteTarget });
+  };
+
+  const handleRevote = () => {
+    if (!revoteTarget) return;
+    apiCall(`/api/rooms/${code}/revote`, { playerId, targetId: revoteTarget });
   };
 
   const handleAdvance = (action: string) => apiCall(`/api/rooms/${code}/advance`, { hostId: playerId, action });
@@ -213,6 +240,9 @@ export default function RoomPage() {
       case 'day-discussion': return renderHostDayDiscussion();
       case 'day-voting': return renderHostDayVoting();
       case 'vote-result': return renderHostVoteResult();
+      case 'justification': return renderHostJustification();
+      case 'day-revoting': return renderHostDayRevoting();
+      case 'final-vote-result': return renderHostFinalVoteResult();
       case 'gameover': return renderGameOver();
       default: return <div>حالة غير معروفة</div>;
     }
@@ -228,6 +258,9 @@ export default function RoomPage() {
       case 'day-discussion': return renderPlayerDayDiscussion();
       case 'day-voting': return renderPlayerDayVoting();
       case 'vote-result': return renderPlayerVoteResult();
+      case 'justification': return renderPlayerJustification();
+      case 'day-revoting': return renderPlayerDayRevoting();
+      case 'final-vote-result': return renderPlayerFinalVoteResult();
       case 'gameover': return renderGameOver();
       default: return <div>حالة غير معروفة</div>;
     }
@@ -548,7 +581,184 @@ export default function RoomPage() {
     </motion.div>
   );
 
-  const renderHostVoteResult = () => renderPlayerVoteResult();
+  const renderHostVoteResult = () => {
+    const accused = (game as any).accusedPlayers || [];
+    const isTie = (game as any).isTie || false;
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+        <div className="text-center">
+          <Badge variant="outline" className="border-red-900/40 text-red-400 mb-3">📊 نتيجة التصويت</Badge>
+          <h2 className="text-3xl font-bold">إحصاء الأصوات</h2>
+        </div>
+        {renderAllRolesPanel()}
+        {game.votes && Object.keys(game.votes).length > 0 && (
+          <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
+            <CardContent className="p-4 space-y-2">
+              <p className="text-sm text-muted-foreground text-center mb-2">🗳️ الأصوات:</p>
+              {Object.entries(game.votes).map(([voterId, targetId]) => {
+                const voter = game.players.find(p => p.id === voterId);
+                const target = targetId === 'skip' ? null : game.players.find(p => p.id === targetId);
+                return <p key={voterId} className="text-xs">{voter?.name} → {target?.name || 'تخطي'}</p>;
+              })}
+            </CardContent>
+          </Card>
+        )}
+        {accused.length > 0 ? (
+          <Card className="bg-card/70 backdrop-blur-sm border-orange-900/30">
+            <CardContent className="p-6 text-center space-y-3">
+              <div className="text-4xl">⚠️</div>
+              <h3 className="text-xl font-bold text-orange-400">
+                {isTie ? 'تعادل! المتهمون:' : 'المتهم بأغلبية الأصوات:'}
+              </h3>
+              <div className="flex gap-2 justify-center flex-wrap">
+                {accused.map((id: string) => {
+                  const p = game.players.find(pl => pl.id === id);
+                  return <Badge key={id} className="bg-orange-800 text-white text-lg px-3 py-1">{p?.name}</Badge>;
+                })}
+              </div>
+              <p className="text-muted-foreground text-sm">
+                {isTie ? 'كل متهم سيحصل على دقيقة للتبرير' : 'سيحصل على دقيقة للتبرير قبل إعادة التصويت'}
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="bg-card/70 backdrop-blur-sm border-secondary/30">
+            <CardContent className="p-6 text-center">
+              <div className="text-4xl">🗳️</div>
+              <p className="text-muted-foreground">لا أحد حصل على أصوات كافية</p>
+            </CardContent>
+          </Card>
+        )}
+        {accused.length > 0 ? (
+          <Button onClick={() => handleAdvance('start-justification')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-orange-700 to-orange-600">
+            🎤 بدء التبرير
+          </Button>
+        ) : (
+          <Button onClick={() => handleAdvance('advance-to-night')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
+            🌙 الانتقال لليل
+          </Button>
+        )}
+      </motion.div>
+    );
+  };
+
+  const renderHostJustification = () => {
+    const accused = (game as any).accusedPlayers || [];
+    const isTie = (game as any).isTie || false;
+    const currentAccused = accused[currentJustifier] || accused[0];
+    const currentPlayer = game.players.find(p => p.id === currentAccused);
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+        <div className="text-center">
+          <Badge variant="outline" className="border-orange-800/40 text-orange-400 mb-3">🎤 وقت التبرير</Badge>
+          <h2 className="text-3xl font-bold text-orange-400">الدفاع عن النفس</h2>
+        </div>
+        {isTie && accused.length > 1 && (
+          <div className="flex gap-2 justify-center">
+            {accused.map((id: string, idx: number) => {
+              const p = game.players.find(pl => pl.id === id);
+              return (
+                <Button key={id} variant={currentJustifier === idx ? 'default' : 'outline'} className={currentJustifier === idx ? 'bg-orange-700' : 'border-orange-900/30 text-orange-400'} onClick={() => setCurrentJustifier(idx)}>
+                  {p?.name}
+                </Button>
+              );
+            })}
+          </div>
+        )}
+        {currentPlayer && (
+          <Card className="bg-card/70 backdrop-blur-sm border-orange-900/30">
+            <CardContent className="p-8 text-center space-y-4">
+              <div className="text-6xl">🎤</div>
+              <h3 className="text-2xl font-bold text-orange-400">{currentPlayer.name}</h3>
+              <p className="text-muted-foreground">يبرر نفسه الآن...</p>
+              <p className="text-5xl font-mono font-bold text-yellow-400">
+                {Math.floor(justificationTimer / 60)}:{(justificationTimer % 60).toString().padStart(2, '0')}
+              </p>
+              <Progress value={(justificationTimer / (game.justificationTime || 60)) * 100} className="mt-3 h-2" />
+            </CardContent>
+          </Card>
+        )}
+        <Button onClick={() => handleAdvance('start-revote')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
+          🗳️ بدء إعادة التصويت
+        </Button>
+      </motion.div>
+    );
+  };
+
+  const renderHostDayRevoting = () => {
+    const accused = (game as any).accusedPlayers || [];
+    const revotes = (game as any).revotes || {};
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+        <div className="text-center">
+          <Badge variant="outline" className="border-red-900/40 text-red-400 mb-3">🗳️ إعادة التصويت - الجولة {game.round}</Badge>
+          <h2 className="text-3xl font-bold">التصويت على المتهمين فقط</h2>
+        </div>
+        {renderAllRolesPanel()}
+        <Card className="bg-card/70 backdrop-blur-sm border-orange-900/30">
+          <CardContent className="p-4 text-center">
+            <p className="text-orange-400 font-bold mb-2">المتهمون:</p>
+            <div className="flex gap-2 justify-center flex-wrap">
+              {accused.map((id: string) => {
+                const p = game.players.find(pl => pl.id === id);
+                return <Badge key={id} className="bg-orange-800 text-white">{p?.name}</Badge>;
+              })}
+            </div>
+          </CardContent>
+        </Card>
+        {Object.keys(revotes).length > 0 && (
+          <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
+            <CardContent className="p-4 space-y-2">
+              <p className="text-sm text-muted-foreground text-center mb-2">🗳️ أصوات إعادة التصويت:</p>
+              {Object.entries(revotes).map(([voterId, targetId]) => {
+                const voter = game.players.find(p => p.id === voterId);
+                const target = targetId === 'skip' ? null : game.players.find(p => p.id === targetId);
+                return <p key={voterId} className="text-xs">{voter?.name} → {target?.name || 'تخطي'}</p>;
+              })}
+            </CardContent>
+          </Card>
+        )}
+        <p className="text-center text-muted-foreground">تم التصويت: {Object.keys(revotes).length} / {alivePlayers.length}</p>
+        <Button onClick={() => handleAdvance('resolve-final-votes')} disabled={actionLoading} variant="outline" className="w-full border-yellow-800/50 text-yellow-400">
+          📊 إنهاء التصويت وإحصاء النتائج النهائية
+        </Button>
+      </motion.div>
+    );
+  };
+
+  const renderHostFinalVoteResult = () => {
+    const eliminated = game.lastVoteEliminated;
+    const eliminatedPlayer = eliminated ? game.players.find(p => p.id === eliminated) : null;
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+        <div className="text-center">
+          <Badge variant="outline" className="border-red-900/40 text-red-400 mb-3">📊 النتيجة النهائية</Badge>
+          <h2 className="text-3xl font-bold">نتيجة التصويت النهائي</h2>
+        </div>
+        {renderAllRolesPanel()}
+        <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
+          <CardContent className="p-6 space-y-4">
+            {eliminatedPlayer ? (
+              <div className="p-4 rounded-lg bg-red-950/40 border border-red-900/40 text-center">
+                <div className="text-4xl mb-2">💀</div>
+                <p className="text-red-400 font-bold text-xl">{eliminatedPlayer.name}</p>
+                {eliminatedPlayer.role && <p className="text-sm text-muted-foreground">{ROLE_INFO[eliminatedPlayer.role].emoji} {ROLE_INFO[eliminatedPlayer.role].name}</p>}
+                <p className="text-muted-foreground text-sm">تم إبعاده بالتصويت</p>
+              </div>
+            ) : (
+              <div className="p-4 rounded-lg bg-secondary/50 text-center">
+                <div className="text-4xl mb-2">🗳️</div>
+                <p className="text-muted-foreground">لا أحد حُذف - تعادل أو تخطي</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        <Button onClick={() => handleAdvance('advance-to-night')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
+          🌙 الانتقال لليل
+        </Button>
+      </motion.div>
+    );
+  };
 
   // ===================== PLAYER VIEWS =====================
 
@@ -964,38 +1174,194 @@ export default function RoomPage() {
   };
 
   const renderPlayerVoteResult = () => {
+    const accused = (game as any).accusedPlayers || [];
+    const isTie = (game as any).isTie || false;
+    const isAccused = accused.includes(playerId);
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+        <div className="text-center">
+          <Badge variant="outline" className="border-red-900/40 text-red-400 mb-3">📊 نتيجة التصويت</Badge>
+          <h2 className="text-3xl font-bold">إحصاء الأصوات</h2>
+        </div>
+        {isAccused && (
+          <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
+            <Card className="border-2 border-orange-500 bg-orange-950/30">
+              <CardContent className="p-8 text-center space-y-3">
+                <div className="text-6xl">⚠️</div>
+                <h3 className="text-2xl font-bold text-orange-400">أنت متهم!</h3>
+                <p className="text-muted-foreground">حان وقت تبريرك - جهّز دفاعك</p>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+        {accused.length > 0 && !isAccused && (
+          <Card className="bg-card/70 backdrop-blur-sm border-orange-900/30">
+            <CardContent className="p-6 text-center space-y-3">
+              <div className="text-4xl">⚠️</div>
+              <h3 className="text-xl font-bold text-orange-400">
+                {isTie ? 'المتهمون بأغلبية الأصوات:' : 'المتهم بأغلبية الأصوات:'}
+              </h3>
+              <div className="flex gap-2 justify-center flex-wrap">
+                {accused.map((id: string) => {
+                  const p = game.players.find(pl => pl.id === id);
+                  return <Badge key={id} className="bg-orange-800 text-white">{p?.name}</Badge>;
+                })}
+              </div>
+              <p className="text-muted-foreground text-sm">سيحصلون على وقت للتبرير ثم يُعاد التصويت</p>
+            </CardContent>
+          </Card>
+        )}
+        {accused.length === 0 && (
+          <Card className="bg-card/70 backdrop-blur-sm border-secondary/30">
+            <CardContent className="p-6 text-center">
+              <p className="text-muted-foreground">لا أحد حصل على أصوات كافية</p>
+            </CardContent>
+          </Card>
+        )}
+      </motion.div>
+    );
+  };
+
+  const renderPlayerJustification = () => {
+    const accused = (game as any).accusedPlayers || [];
+    const isAccused = accused.includes(playerId);
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+        <div className="text-center">
+          <Badge variant="outline" className="border-orange-800/40 text-orange-400 mb-3">🎤 وقت التبرير</Badge>
+          <h2 className="text-3xl font-bold text-orange-400">الدفاع عن النفس</h2>
+        </div>
+        {isAccused ? (
+          <Card className="border-2 border-orange-500 bg-orange-950/30">
+            <CardContent className="p-8 text-center space-y-4">
+              <div className="text-6xl">🎤</div>
+              <h3 className="text-2xl font-bold text-orange-400">أنت متهم! برّر نفسك!</h3>
+              <p className="text-muted-foreground">الوقت المتبقي لتبريرك:</p>
+              <p className="text-5xl font-mono font-bold text-yellow-400">
+                {Math.floor(justificationTimer / 60)}:{(justificationTimer % 60).toString().padStart(2, '0')}
+              </p>
+              <Progress value={(justificationTimer / (game.justificationTime || 60)) * 100} className="mt-3 h-2" />
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="bg-card/70 backdrop-blur-sm border-orange-900/30">
+            <CardContent className="p-12 text-center">
+              <motion.div animate={{ opacity: [0.3, 1, 0.3] }} transition={{ duration: 3, repeat: Infinity }} className="text-8xl">🎤</motion.div>
+              <p className="text-xl text-muted-foreground mt-6">المتهمون يبررون أنفسهم...</p>
+              <p className="text-muted-foreground text-sm mt-2">استمع جيداً قبل إعادة التصويت</p>
+            </CardContent>
+          </Card>
+        )}
+      </motion.div>
+    );
+  };
+
+  const renderPlayerDayRevoting = () => {
+    const accused = (game as any).accusedPlayers || [];
+    const revotes = (game as any).revotes || {};
+    const myRevote = revotes[playerId];
+    const hasRevoted = !!myRevote;
+    if (!game.playerIsAlive) {
+      return (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+          <div className="text-center">
+            <Badge variant="outline" className="border-red-900/40 text-red-400 mb-3">🗳️ إعادة التصويت</Badge>
+            <h2 className="text-3xl font-bold">إعادة التصويت على المتهمين</h2>
+          </div>
+          <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
+            <CardContent className="p-8 text-center">
+              <div className="text-5xl mb-3">💀</div>
+              <p className="text-muted-foreground">أنت خارج اللعبة - تراقب فقط</p>
+            </CardContent>
+          </Card>
+        </motion.div>
+      );
+    }
+    if (game.playerIsSilenced) {
+      return (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+          <div className="text-center">
+            <Badge variant="outline" className="border-purple-800/40 text-purple-400 mb-3">🗳️ إعادة التصويت</Badge>
+            <h2 className="text-3xl font-bold">إعادة التصويت على المتهمين</h2>
+          </div>
+          <Card className="border-2 border-purple-500 bg-purple-950/30">
+            <CardContent className="p-8 text-center space-y-3">
+              <div className="text-6xl">🤫</div>
+              <h3 className="text-2xl font-bold text-purple-400">أنت مسكّت!</h3>
+              <p className="text-muted-foreground">لا يمكنك التصويت هذه الجولة</p>
+            </CardContent>
+          </Card>
+        </motion.div>
+      );
+    }
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+        <div className="text-center">
+          <Badge variant="outline" className="border-red-900/40 text-red-400 mb-3">🗳️ إعادة التصويت - الجولة {game.round}</Badge>
+          <h2 className="text-3xl font-bold">صوّت على المتهمين فقط</h2>
+        </div>
+        {!hasRevoted ? (
+          <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
+            <CardContent className="p-4">
+              <div className="grid grid-cols-1 gap-3">
+                {accused.map((id: string) => {
+                  const p = game.players.find(pl => pl.id === id);
+                  return (
+                    <Button key={id} variant={revoteTarget === id ? 'default' : 'outline'} className={`h-14 text-base ${revoteTarget === id ? 'bg-red-700 hover:bg-red-600 border-red-500' : 'border-red-900/30 text-foreground hover:bg-red-950/30'}`} onClick={() => setRevoteTarget(id)}>
+                      🎯 {p?.name}
+                    </Button>
+                  );
+                })}
+                <Button variant={revoteTarget === 'skip' ? 'default' : 'outline'} className={`h-14 text-base ${revoteTarget === 'skip' ? 'bg-gray-700 hover:bg-gray-600' : 'border-gray-900/30 text-foreground hover:bg-gray-950/30'}`} onClick={() => setRevoteTarget('skip')}>
+                  ⏭️ تخطي
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="bg-card/70 backdrop-blur-sm border-green-900/30">
+            <CardContent className="p-8 text-center space-y-3">
+              <div className="text-6xl">✅</div>
+              <h3 className="text-2xl font-bold text-green-400">تم التصويت!</h3>
+              <p className="text-muted-foreground">في انتظار باقي اللاعبين...</p>
+            </CardContent>
+          </Card>
+        )}
+        {!hasRevoted && revoteTarget && (
+          <Button onClick={handleRevote} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
+            🗳️ تأكيد التصويت
+          </Button>
+        )}
+      </motion.div>
+    );
+  };
+
+  const renderPlayerFinalVoteResult = () => {
     const eliminated = game.lastVoteEliminated;
     const eliminatedPlayer = eliminated ? game.players.find(p => p.id === eliminated) : null;
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
         <div className="text-center">
-          <Badge variant="outline" className="border-red-900/40 text-red-400 mb-3">📊 نتيجة التصويت</Badge>
-          <h2 className="text-3xl font-bold">نتيجة التصويت</h2>
+          <Badge variant="outline" className="border-red-900/40 text-red-400 mb-3">📊 النتيجة النهائية</Badge>
+          <h2 className="text-3xl font-bold">نتيجة التصويت النهائي</h2>
         </div>
-        {eliminatedPlayer ? (
-          <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
-            <Card className="bg-card/70 backdrop-blur-sm border-red-900/50">
-              <CardContent className="p-8 text-center space-y-3">
-                <div className="text-6xl">💀</div>
-                <h3 className="text-2xl font-bold text-red-400">{eliminatedPlayer.name}</h3>
-                <p className="text-muted-foreground">تم إبعاده بالتصويت</p>
-                {eliminatedPlayer.role && (
-                  <div className="mt-4 p-3 rounded-lg bg-secondary/50 inline-block">
-                    <span className="text-lg">{ROLE_INFO[eliminatedPlayer.role].emoji} كان {ROLE_INFO[eliminatedPlayer.role].name}</span>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </motion.div>
-        ) : (
-          <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
-            <CardContent className="p-8 text-center space-y-3">
-              <div className="text-6xl">⚖️</div>
-              <h3 className="text-2xl font-bold">تعادل!</h3>
-              <p className="text-muted-foreground">لم يتم إبعاد أحد</p>
-            </CardContent>
-          </Card>
-        )}
+        <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
+          <CardContent className="p-6 space-y-4">
+            {eliminatedPlayer ? (
+              <div className="p-4 rounded-lg bg-red-950/40 border border-red-900/40 text-center">
+                <div className="text-4xl mb-2">💀</div>
+                <p className="text-red-400 font-bold text-xl">{eliminatedPlayer.name}</p>
+                {game.phase === 'gameover' && eliminatedPlayer.role && <p className="text-sm text-muted-foreground">{ROLE_INFO[eliminatedPlayer.role].emoji} {ROLE_INFO[eliminatedPlayer.role].name}</p>}
+                <p className="text-muted-foreground text-sm">تم إبعاده بالتصويت</p>
+              </div>
+            ) : (
+              <div className="p-4 rounded-lg bg-secondary/50 text-center">
+                <div className="text-4xl mb-2">🗳️</div>
+                <p className="text-muted-foreground">لا أحد حُذف</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </motion.div>
     );
   };
