@@ -264,7 +264,7 @@ export async function resolveNight(code: string, hostId: string): Promise<GameSt
   if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه إنهاء الليل' };
   if (game.phase !== 'night') return { error: 'ليس الوقت المناسب' };
 
-  // 1. Resolve mafia KILL (majority vote)
+  // 1. Resolve mafia KILL (majority vote - BUG FIX 5: no kill if tie)
   const mafiaKillVotes = game.nightActions.mafiaVotes;
   const killVoteCounts: Record<string, number> = {};
   Object.values(mafiaKillVotes).forEach(targetId => {
@@ -272,14 +272,22 @@ export async function resolveNight(code: string, hostId: string): Promise<GameSt
   });
   let maxKillVotes = 0;
   let killTarget = '';
+  let killTie = false;
   Object.entries(killVoteCounts).forEach(([targetId, count]) => {
     if (count > maxKillVotes) {
       maxKillVotes = count;
       killTarget = targetId;
+      killTie = false;
+    } else if (count === maxKillVotes && count > 0) {
+      killTie = true;
     }
   });
+  // If mafia disagree (tie), no one gets killed
+  if (killTie) {
+    killTarget = '';
+  }
 
-  // 2. Resolve mafia SILENCE (majority vote)
+  // 2. Resolve mafia SILENCE (majority vote - BUG FIX 5: no silence if tie)
   const mafiaSilenceVotes = game.nightActions.mafiaSilenceVotes;
   const silenceVoteCounts: Record<string, number> = {};
   Object.values(mafiaSilenceVotes).forEach(targetId => {
@@ -287,12 +295,20 @@ export async function resolveNight(code: string, hostId: string): Promise<GameSt
   });
   let maxSilenceVotes = 0;
   let silenceTarget = '';
+  let silenceTie = false;
   Object.entries(silenceVoteCounts).forEach(([targetId, count]) => {
     if (count > maxSilenceVotes) {
       maxSilenceVotes = count;
       silenceTarget = targetId;
+      silenceTie = false;
+    } else if (count === maxSilenceVotes && count > 0) {
+      silenceTie = true;
     }
   });
+  // If mafia disagree on silence (tie), no one gets silenced
+  if (silenceTie) {
+    silenceTarget = '';
+  }
 
   // 3. Process kills and saves
   const killed: string[] = [];
@@ -423,6 +439,12 @@ export async function submitVote(code: string, playerId: string, targetId: strin
     if (!target.isAlive) return { error: 'لا يمكنك التصويت ضد لاعب خارج اللعبة' };
   }
 
+  // BUG FIX 4: Prevent self-voting
+  if (targetId === playerId) return { error: 'لا يمكنك التصويت ضد نفسك' };
+
+  // BUG FIX 6: Prevent changing vote
+  if (game.votes[playerId]) return { error: 'لقد صوّت بالفعل ولا يمكنه تغيير صوته' };
+
   game.votes[playerId] = targetId;
 
   await saveGame(game);
@@ -517,11 +539,19 @@ export async function submitRevote(code: string, playerId: string, targetId: str
   if (!player.isAlive) return { error: 'لا يمكنك التصويت وأنت خارج اللعبة' };
   if (player.isSilenced) return { error: 'أنت مسكّت ولا يمكنك التصويت هذه الجولة' };
 
+  // BUG FIX 3: Accused players cannot vote in revote
+  if (game.accusedPlayers.includes(playerId)) return { error: 'المتهم لا يمكنه التصويت في إعادة التصويت' };
+
   if (targetId !== 'skip') {
+    // BUG FIX 4: Prevent self-voting in revote (accused already blocked above, but just in case)
+    if (targetId === playerId) return { error: 'لا يمكنك التصويت ضد نفسك' };
     if (!game.accusedPlayers.includes(targetId)) return { error: 'يمكنك التصويت فقط على المتهمين' };
     const target = game.players.find(p => p.id === targetId);
     if (!target || !target.isAlive) return { error: 'الهدف غير صالح' };
   }
+
+  // BUG FIX 6: Prevent changing revote
+  if (game.revotes[playerId]) return { error: 'لقد صوّت بالفعل ولا يمكنه تغيير صوته' };
 
   game.revotes[playerId] = targetId;
 
@@ -701,12 +731,25 @@ export async function getPublicGameState(code: string, playerId?: string): Promi
     discussionTime: game.discussionTime,
     nightActionsComplete: game.nightActionsComplete,
     sniperDied: game.sniperDied,
-    votes: game.phase === 'day-voting' || game.phase === 'vote-result'
-      ? game.votes
-      : {},
-    revotes: game.phase === 'day-revoting' || game.phase === 'final-vote-result'
-      ? game.revotes
-      : {},
+    // BUG FIX 1+2: Hide individual votes from players - only host sees full votes
+    // Players only see: total count and their own vote
+    votes: isHost
+      ? (game.phase === 'day-voting' || game.phase === 'vote-result' ? game.votes : {})
+      : (game.phase === 'day-voting' || game.phase === 'vote-result'
+          ? (playerId && game.votes[playerId] ? { [playerId]: game.votes[playerId] } : {})
+          : {}),
+    revotes: isHost
+      ? (game.phase === 'day-revoting' || game.phase === 'final-vote-result' ? game.revotes : {})
+      : (game.phase === 'day-revoting' || game.phase === 'final-vote-result'
+          ? (playerId && game.revotes[playerId] ? { [playerId]: game.revotes[playerId] } : {})
+          : {}),
+    // Add vote counts for display (how many voted, without showing who voted for whom)
+    voteCount: (game.phase === 'day-voting' || game.phase === 'vote-result')
+      ? Object.keys(game.votes).length
+      : 0,
+    revoteCount: (game.phase === 'day-revoting' || game.phase === 'final-vote-result')
+      ? Object.keys(game.revotes).length
+      : 0,
     accusedPlayers: game.accusedPlayers,
     isTie: game.isTie,
     justificationTime: game.justificationTime,

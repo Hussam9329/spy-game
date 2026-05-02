@@ -61,6 +61,8 @@ interface GameStateView {
   isTie?: boolean;
   revotes?: Record<string, string>;
   justificationTime?: number;
+  voteCount?: number;
+  revoteCount?: number;
 }
 
 export default function RoomPage() {
@@ -574,7 +576,7 @@ export default function RoomPage() {
           </CardContent>
         </Card>
       )}
-      <p className="text-center text-muted-foreground">تم التصويت: {game.votes ? Object.keys(game.votes).length : 0} / {alivePlayers.length}</p>
+      <p className="text-center text-muted-foreground">تم التصويت: {game.voteCount ?? (game.votes ? Object.keys(game.votes).length : 0)} / {alivePlayers.length}</p>
       <Button onClick={() => handleAdvance('resolve-votes')} disabled={actionLoading} variant="outline" className="w-full border-yellow-800/50 text-yellow-400">
         📊 إنهاء التصويت وإحصاء النتائج
       </Button>
@@ -718,7 +720,7 @@ export default function RoomPage() {
             </CardContent>
           </Card>
         )}
-        <p className="text-center text-muted-foreground">تم التصويت: {Object.keys(revotes).length} / {alivePlayers.length}</p>
+        <p className="text-center text-muted-foreground">تم التصويت: {game.revoteCount ?? Object.keys(revotes).length} / {alivePlayers.length}</p>
         <Button onClick={() => handleAdvance('resolve-final-votes')} disabled={actionLoading} variant="outline" className="w-full border-yellow-800/50 text-yellow-400">
           📊 إنهاء التصويت وإحصاء النتائج النهائية
         </Button>
@@ -1162,10 +1164,10 @@ export default function RoomPage() {
           </Card>
         )}
 
-        {game.votes && Object.keys(game.votes).length > 0 && (
+        {(game.voteCount ?? 0) > 0 && (
           <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
             <CardContent className="p-4">
-              <p className="text-sm text-muted-foreground text-center">🗳️ تم التصويت: {Object.keys(game.votes).length} / {alivePlayers.filter(p => !p.isSilenced).length}</p>
+              <p className="text-sm text-muted-foreground text-center">🗳️ تم التصويت: {game.voteCount ?? 0} / {alivePlayers.filter(p => !p.isSilenced).length}</p>
             </CardContent>
           </Card>
         )}
