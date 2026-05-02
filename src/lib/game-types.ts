@@ -8,7 +8,8 @@ export interface Player {
   role?: Role;
   isAlive: boolean;
   sniperUsed: boolean;
-  isSilenced?: boolean; // Silenced by mafia - can't vote during day
+  isSilenced?: boolean; // Silenced by mafia - can't chat during day (but CAN vote)
+  doctorSelfSaveUsed?: boolean; // Whether doctor has used their one-time self-save
 }
 
 export interface GameSettings {
@@ -54,6 +55,15 @@ export interface PublicChatMessage {
   round: number;
 }
 
+export interface JustificationChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  message: string;
+  timestamp: number;
+  round: number;
+}
+
 export interface GameState {
   code: string;
   hostId: string;
@@ -72,6 +82,8 @@ export interface GameState {
   lastVoteEliminated?: string;
   winner?: 'mafia' | 'citizens';
   discussionTime: number;
+  votingTime: number;            // Time in seconds for voting (default 120)
+  votingTimerStartedAt?: number; // Timestamp when voting started, for sync
   nightActionsComplete: boolean;
   sniperDied?: boolean;           // True if sniper died from shooting a citizen
   accusedPlayers: string[];       // Players who got most votes and need to justify
@@ -80,6 +92,9 @@ export interface GameState {
   justificationTime: number;      // Time in seconds for justification (default 60)
   mafiaChat: MafiaChatMessage[];  // Mafia-only chat messages
   publicChat: PublicChatMessage[];  // Public chat for all players during day
+  justificationChat: JustificationChatMessage[];  // Text-based justification chat
+  isBotHost: boolean;             // Whether the host is a bot (auto-advance)
+  lastDoctorSaveTargets: Record<string, string>; // doctorId -> last saved playerId (for consecutive save prevention)
 }
 
 export const ROLE_INFO: Record<Role, { name: string; emoji: string; color: string; description: string }> = {
@@ -152,6 +167,7 @@ export function distributeRoles(players: Player[], settings: GameSettings): Play
     isAlive: true,
     sniperUsed: false,
     isSilenced: false,
+    doctorSelfSaveUsed: false,
   }));
 }
 

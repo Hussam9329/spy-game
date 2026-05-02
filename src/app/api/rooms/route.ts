@@ -4,13 +4,13 @@ import { createRoom } from '@/lib/game-store';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { hostName } = body;
+    const { hostName, isBotHost } = body;
 
     if (!hostName || typeof hostName !== 'string' || hostName.trim().length === 0) {
       return NextResponse.json({ error: 'اسم المراقب مطلوب' }, { status: 400 });
     }
 
-    const game = await createRoom(hostName.trim());
+    const game = await createRoom(hostName.trim(), { isBotHost: !!isBotHost });
 
     return NextResponse.json({
       code: game.code,

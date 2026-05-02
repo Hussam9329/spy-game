@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +11,7 @@ import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ROLE_INFO, type GamePhase, type Role, type MafiaChatMessage, type PublicChatMessage } from '@/lib/game-types';
+import { ROLE_INFO, type GamePhase, type Role, type MafiaChatMessage, type PublicChatMessage, type JustificationChatMessage } from '@/lib/game-types';
 
 interface GamePlayer {
   id: string;
@@ -47,6 +47,8 @@ interface GameStateView {
   lastVoteEliminated?: string;
   winner?: 'mafia' | 'citizens';
   discussionTime: number;
+  votingTime?: number;
+  votingTimerStartedAt?: number;
   nightActionsComplete: boolean;
   sniperDied?: boolean;
   playerRole?: Role;
@@ -65,6 +67,10 @@ interface GameStateView {
   revoteCount?: number;
   mafiaChat?: MafiaChatMessage[];
   publicChat?: PublicChatMessage[];
+  justificationChat?: JustificationChatMessage[];
+  isBotHost?: boolean;
+  doctorSelfSaveUsed?: boolean;
+  lastDoctorSaveTarget?: string;
 }
 
 export default function RoomPage() {
@@ -77,12 +83,14 @@ export default function RoomPage() {
   const [error, setError] = useState('');
   const [roleRevealed, setRoleRevealed] = useState(false);
   const [killTarget, setKillTarget] = useState('');
+  const [saveTarget, setSaveTarget] = useState('');
   const [silenceTarget, setSilenceTarget] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [investigationResult, setInvestigationResult] = useState<{ isMafia: boolean } | null>(null);
   const [discussionTimer, setDiscussionTimer] = useState(0);
+  const [votingTimer, setVotingTimer] = useState(0);
   const [voteTarget, setVoteTarget] = useState('');
-  const [settingsForm, setSettingsForm] = useState({ mafia: 2, doctors: 1, snipers: 1, investigators: 1, discussionTime: 180 });
+  const [settingsForm, setSettingsForm] = useState({ mafia: 2, doctors: 1, snipers: 1, investigators: 1, discussionTime: 180, votingTime: 120 });
   const [justificationTimer, setJustificationTimer] = useState(0);
   const [revoteTarget, setRevoteTarget] = useState('');
   const [currentJustifier, setCurrentJustifier] = useState(0);
@@ -90,8 +98,28 @@ export default function RoomPage() {
   const [chatSending, setChatSending] = useState(false);
   const [publicChatMessage, setPublicChatMessage] = useState('');
   const [publicChatSending, setPublicChatSending] = useState(false);
+  const [justificationMessage, setJustificationMessage] = useState('');
+  const [justificationSending, setJustificationSending] = useState(false);
+
+  // Refs for auto-scroll
+  const mafiaChatEndRef = useRef<HTMLDivElement>(null);
+  const publicChatEndRef = useRef<HTMLDivElement>(null);
+  const justificationChatEndRef = useRef<HTMLDivElement>(null);
 
   const isHost = game?.isHost === true;
+
+  // Auto-scroll effects
+  useEffect(() => {
+    mafiaChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [game?.mafiaChat?.length]);
+
+  useEffect(() => {
+    publicChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [game?.publicChat?.length]);
+
+  useEffect(() => {
+    justificationChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [game?.justificationChat?.length]);
 
   const fetchGame = useCallback(async () => {
     try {
@@ -119,9 +147,10 @@ export default function RoomPage() {
     fetchGame();
   }, [code, playerId, fetchGame]);
 
+  // CHANGE 1: Polling speed 2000 -> 1000
   useEffect(() => {
     if (!code || !playerId || error) return;
-    const interval = setInterval(fetchGame, 2000);
+    const interval = setInterval(fetchGame, 1000);
     return () => clearInterval(interval);
   }, [code, playerId, error, fetchGame]);
 
@@ -137,6 +166,24 @@ export default function RoomPage() {
       return () => clearInterval(timer);
     }
   }, [game?.phase, game?.discussionTime, game?.round]);
+
+  // Voting timer
+  useEffect(() => {
+    if ((game?.phase === 'day-voting' || game?.phase === 'day-revoting') && game.votingTime) {
+      const startedAt = game.votingTimerStartedAt || Date.now();
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      const remaining = Math.max(0, game.votingTime - elapsed);
+      setVotingTimer(remaining);
+
+      const timer = setInterval(() => {
+        setVotingTimer(prev => {
+          if (prev <= 1) { clearInterval(timer); return 0; }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [game?.phase, game?.votingTime, game?.votingTimerStartedAt]);
 
   useEffect(() => {
     if (game?.phase === 'justification' && game.justificationTime) {
@@ -154,6 +201,7 @@ export default function RoomPage() {
   useEffect(() => {
     if (game?.phase === 'night') {
       setKillTarget('');
+      setSaveTarget('');
       setSilenceTarget('');
       setInvestigationResult(null);
     }
@@ -161,6 +209,52 @@ export default function RoomPage() {
     if (game?.phase === 'day-revoting') setRevoteTarget('');
     if (game?.phase === 'justification') { setCurrentJustifier(0); setJustificationTimer(0); }
   }, [game?.phase, game?.round]);
+
+  // Bot host auto-advance
+  useEffect(() => {
+    if (!game?.isBotHost || !isHost) return;
+
+    if (game.phase === 'role-reveal') {
+      const timer = setTimeout(() => handleAdvance('start-night'), 5000);
+      return () => clearTimeout(timer);
+    }
+    if (game.phase === 'night' && game.nightActionsComplete) {
+      const timer = setTimeout(() => handleAdvance('resolve-night'), 3000);
+      return () => clearTimeout(timer);
+    }
+    if (game.phase === 'night-result') {
+      const timer = setTimeout(() => handleAdvance('advance-to-day'), 5000);
+      return () => clearTimeout(timer);
+    }
+    if (game.phase === 'day-discussion' && discussionTimer <= 0) {
+      const timer = setTimeout(() => handleAdvance('start-voting'), 1000);
+      return () => clearTimeout(timer);
+    }
+    if (game.phase === 'vote-result' && (game.accusedPlayers || []).length === 0) {
+      const timer = setTimeout(() => handleAdvance('advance-to-night'), 3000);
+      return () => clearTimeout(timer);
+    }
+    if (game.phase === 'vote-result' && (game.accusedPlayers || []).length > 0) {
+      const timer = setTimeout(() => handleAdvance('start-justification'), 3000);
+      return () => clearTimeout(timer);
+    }
+    if (game.phase === 'justification' && justificationTimer <= 0) {
+      const timer = setTimeout(() => handleAdvance('start-revote'), 1000);
+      return () => clearTimeout(timer);
+    }
+    if (game.phase === 'day-voting' && votingTimer <= 0) {
+      const timer = setTimeout(() => handleAdvance('resolve-votes'), 1000);
+      return () => clearTimeout(timer);
+    }
+    if (game.phase === 'day-revoting' && votingTimer <= 0) {
+      const timer = setTimeout(() => handleAdvance('resolve-final-votes'), 1000);
+      return () => clearTimeout(timer);
+    }
+    if (game.phase === 'final-vote-result') {
+      const timer = setTimeout(() => handleAdvance('advance-to-night'), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [game?.phase, game?.isBotHost, game?.nightActionsComplete, discussionTimer, justificationTimer, votingTimer, isHost]);
 
   const apiCall = async (url: string, body: Record<string, unknown>) => {
     setActionLoading(true);
@@ -186,7 +280,7 @@ export default function RoomPage() {
   const handleUpdateSettings = () => apiCall(`/api/rooms/${code}/settings`, { hostId: playerId, ...settingsForm });
 
   const handleNightAction = async (type: 'kill' | 'save' | 'shoot' | 'investigate' | 'silence', target?: string) => {
-    const tid = target || (type === 'kill' ? killTarget : type === 'silence' ? silenceTarget : killTarget);
+    const tid = target || (type === 'kill' ? killTarget : type === 'silence' ? silenceTarget : type === 'save' ? saveTarget : killTarget);
     if (!tid) return;
     const result = await apiCall(`/api/rooms/${code}/action`, { playerId, type, targetId: tid });
     if (type === 'investigate' && result?.investigation) {
@@ -194,6 +288,7 @@ export default function RoomPage() {
     }
     if (type === 'kill') setKillTarget('');
     if (type === 'silence') setSilenceTarget('');
+    if (type === 'save') setSaveTarget('');
   };
 
   const handleVote = () => {
@@ -246,6 +341,25 @@ export default function RoomPage() {
     }
   };
 
+  const handleSendJustification = async () => {
+    if (!justificationMessage.trim() || justificationSending) return;
+    setJustificationSending(true);
+    try {
+      const res = await fetch(`/api/rooms/${code}/justification-chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId, message: justificationMessage }),
+      });
+      const data = await res.json();
+      if (data.error) { setError(data.error); }
+      else { setJustificationMessage(''); await fetchGame(); }
+    } catch {
+      setError('خطأ في إرسال الرسالة');
+    } finally {
+      setJustificationSending(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -275,6 +389,7 @@ export default function RoomPage() {
   const deadPlayers = game.players.filter(p => !p.isAlive);
   const silencedPlayers = game.players.filter(p => p.isSilenced && p.isAlive);
   const myPlayer = game.players.find(p => p.id === playerId);
+  const accused = game.accusedPlayers || [];
 
   // ====== HOST MODERATOR VIEW ======
   const renderHostView = () => {
@@ -319,7 +434,20 @@ export default function RoomPage() {
         {isHost ? '👁️ المراقب' : `🎮 ${myPlayer?.name || 'لاعب'}`}
       </Badge>
       {game.round > 0 && <span className="text-muted-foreground text-sm ml-2">الجولة {game.round}</span>}
+      {game.isBotHost && <span className="text-muted-foreground text-sm ml-2">🤖 بوت</span>}
     </div>
+  );
+
+  // ====== VOTING TIMER CARD ======
+  const renderVotingTimer = () => (
+    <Card className="bg-card/70 backdrop-blur-sm border-red-900/20">
+      <CardContent className="p-4">
+        <p className="text-4xl font-mono font-bold text-red-400 text-center">
+          {Math.floor(votingTimer / 60)}:{(votingTimer % 60).toString().padStart(2, '0')}
+        </p>
+        <Progress value={(votingTimer / (game.votingTime || 120)) * 100} className="mt-3 h-2" />
+      </CardContent>
+    </Card>
   );
 
   // ====== MAFIA CHAT COMPONENT (shared between Mafia player + Host) ======
@@ -343,6 +471,7 @@ export default function RoomPage() {
                     <p className="text-sm text-foreground leading-relaxed">{msg.message}</p>
                   </div>
                 ))}
+                <div ref={mafiaChatEndRef} />
               </div>
             )}
           </ScrollArea>
@@ -392,6 +521,7 @@ export default function RoomPage() {
                     <p className="text-sm text-foreground leading-relaxed">{msg.message}</p>
                   </div>
                 ))}
+                <div ref={publicChatEndRef} />
               </div>
             )}
           </ScrollArea>
@@ -417,6 +547,56 @@ export default function RoomPage() {
           )}
           {!canSend && messages.length === 0 && (
             <p className="text-center text-muted-foreground text-xs">الدردشة ستكون متاحة خلال وقت النقاش</p>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
+  // ====== JUSTIFICATION CHAT COMPONENT ======
+  const renderJustificationChat = (canSend: boolean = false) => {
+    const messages = game.justificationChat || [];
+    return (
+      <Card className="bg-card/70 backdrop-blur-sm border-orange-900/30">
+        <CardHeader><CardTitle className="text-lg text-orange-400">💬 دردشة التبرير</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <ScrollArea className="h-56 rounded-lg bg-orange-950/10 p-3">
+            {messages.length === 0 ? (
+              <p className="text-center text-muted-foreground text-sm">لا توجد رسائل بعد...</p>
+            ) : (
+              <div className="space-y-2">
+                {messages.map((msg) => (
+                  <div key={msg.id} className={`p-2 rounded-lg ${msg.senderId === playerId ? 'bg-orange-900/20 ml-4' : 'bg-secondary/50 mr-4'}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-bold text-orange-400">⚠️ {msg.senderName}</span>
+                      <span className="text-xs text-muted-foreground">{new Date(msg.timestamp).toLocaleTimeString('ar', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                    <p className="text-sm text-foreground leading-relaxed">{msg.message}</p>
+                  </div>
+                ))}
+                <div ref={justificationChatEndRef} />
+              </div>
+            )}
+          </ScrollArea>
+          {canSend && (
+            <div className="flex gap-2">
+              <Input
+                value={justificationMessage}
+                onChange={(e) => setJustificationMessage(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendJustification(); } }}
+                placeholder="اكتب دفاعك هنا..."
+                className="bg-input/50 text-sm"
+                maxLength={1000}
+                disabled={justificationSending}
+              />
+              <Button
+                onClick={handleSendJustification}
+                disabled={!justificationMessage.trim() || justificationSending}
+                className="bg-gradient-to-l from-orange-700 to-orange-600 px-4 shrink-0"
+              >
+                {justificationSending ? '⏳' : '📤'}
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -502,6 +682,14 @@ export default function RoomPage() {
               <Label className="text-right block text-sm">عدد المحققين 🟡</Label>
               <Input type="number" min={0} max={game.players.length - 2} value={settingsForm.investigators} onChange={(e) => setSettingsForm(prev => ({ ...prev, investigators: Number(e.target.value) }))} className="text-center bg-input/50" />
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-right block text-sm">وقت النقاش (ثواني) ☀️</Label>
+            <Input type="number" min={30} max={600} value={settingsForm.discussionTime} onChange={(e) => setSettingsForm(prev => ({ ...prev, discussionTime: Number(e.target.value) }))} className="text-center bg-input/50" />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-right block text-sm">وقت التصويت (ثواني) 🗳️</Label>
+            <Input type="number" min={30} max={300} value={settingsForm.votingTime} onChange={(e) => setSettingsForm(prev => ({ ...prev, votingTime: Number(e.target.value) }))} className="text-center bg-input/50" />
           </div>
           <div className="text-center space-y-1">
             <p className="text-sm text-muted-foreground">المواطنون الصالحون ⚪: {Math.max(0, game.players.length - settingsForm.mafia - settingsForm.doctors - settingsForm.snipers - settingsForm.investigators)}</p>
@@ -648,7 +836,7 @@ export default function RoomPage() {
               <div key={silencedId} className="p-4 rounded-lg bg-purple-950/40 border border-purple-900/40 text-center">
                 <div className="text-4xl mb-2">🤫</div>
                 <p className="text-purple-400 font-bold text-xl">{p?.name}</p>
-                <p className="text-muted-foreground text-sm">تم تسكيته - لن يستطيع التصويت</p>
+                <p className="text-muted-foreground text-sm">تم تسكيته - لن يستطيع المشاركة في النقاش</p>
               </div>
             );
           })}
@@ -714,6 +902,7 @@ export default function RoomPage() {
         <h2 className="text-3xl font-bold">مراقبة التصويت</h2>
       </div>
       {renderAllRolesPanel()}
+      {renderVotingTimer()}
       {game.votes && Object.keys(game.votes).length > 0 && (
         <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
           <CardContent className="p-4 space-y-2">
@@ -736,8 +925,7 @@ export default function RoomPage() {
   );
 
   const renderHostVoteResult = () => {
-    const accused = (game as any).accusedPlayers || [];
-    const isTie = (game as any).isTie || false;
+    const isTie = game.isTie || false;
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
         <div className="text-center">
@@ -797,10 +985,7 @@ export default function RoomPage() {
   };
 
   const renderHostJustification = () => {
-    const accused = (game as any).accusedPlayers || [];
-    const isTie = (game as any).isTie || false;
-    const currentAccused = accused[currentJustifier] || accused[0];
-    const currentPlayer = game.players.find(p => p.id === currentAccused);
+    const isTie = game.isTie || false;
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
         <div className="text-center">
@@ -819,19 +1004,16 @@ export default function RoomPage() {
             })}
           </div>
         )}
-        {currentPlayer && (
-          <Card className="bg-card/70 backdrop-blur-sm border-orange-900/30">
-            <CardContent className="p-8 text-center space-y-4">
-              <div className="text-6xl">🎤</div>
-              <h3 className="text-2xl font-bold text-orange-400">{currentPlayer.name}</h3>
-              <p className="text-muted-foreground">يبرر نفسه الآن...</p>
-              <p className="text-5xl font-mono font-bold text-yellow-400">
-                {Math.floor(justificationTimer / 60)}:{(justificationTimer % 60).toString().padStart(2, '0')}
-              </p>
-              <Progress value={(justificationTimer / (game.justificationTime || 60)) * 100} className="mt-3 h-2" />
-            </CardContent>
-          </Card>
-        )}
+        {/* Justification chat - host can see but not send */}
+        {renderJustificationChat(false)}
+        <Card className="bg-card/70 backdrop-blur-sm border-orange-900/30">
+          <CardContent className="p-4 text-center">
+            <p className="text-4xl font-mono font-bold text-yellow-400">
+              {Math.floor(justificationTimer / 60)}:{(justificationTimer % 60).toString().padStart(2, '0')}
+            </p>
+            <Progress value={(justificationTimer / (game.justificationTime || 60)) * 100} className="mt-3 h-2" />
+          </CardContent>
+        </Card>
         <Button onClick={() => handleAdvance('start-revote')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
           🗳️ بدء إعادة التصويت
         </Button>
@@ -840,26 +1022,28 @@ export default function RoomPage() {
   };
 
   const renderHostDayRevoting = () => {
-    const accused = (game as any).accusedPlayers || [];
-    const revotes = (game as any).revotes || {};
+    const revotes = game.revotes || {};
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
         <div className="text-center">
           <Badge variant="outline" className="border-red-900/40 text-red-400 mb-3">🗳️ إعادة التصويت - الجولة {game.round}</Badge>
-          <h2 className="text-3xl font-bold">التصويت على المتهمين فقط</h2>
+          <h2 className="text-3xl font-bold">التصويت النهائي</h2>
         </div>
         {renderAllRolesPanel()}
-        <Card className="bg-card/70 backdrop-blur-sm border-orange-900/30">
-          <CardContent className="p-4 text-center">
-            <p className="text-orange-400 font-bold mb-2">المتهمون:</p>
-            <div className="flex gap-2 justify-center flex-wrap">
-              {accused.map((id: string) => {
-                const p = game.players.find(pl => pl.id === id);
-                return <Badge key={id} className="bg-orange-800 text-white">{p?.name}</Badge>;
-              })}
-            </div>
-          </CardContent>
-        </Card>
+        {renderVotingTimer()}
+        {accused.length > 0 && (
+          <Card className="bg-card/70 backdrop-blur-sm border-orange-900/30">
+            <CardContent className="p-4 text-center">
+              <p className="text-orange-400 font-bold mb-2">المتهمون:</p>
+              <div className="flex gap-2 justify-center flex-wrap">
+                {accused.map((id: string) => {
+                  const p = game.players.find(pl => pl.id === id);
+                  return <Badge key={id} className="bg-orange-800 text-white">{p?.name}</Badge>;
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
         {Object.keys(revotes).length > 0 && (
           <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
             <CardContent className="p-4 space-y-2">
@@ -1027,7 +1211,7 @@ export default function RoomPage() {
       <Card className="bg-card/70 backdrop-blur-sm border-purple-900/30">
         <CardHeader><CardTitle className="text-lg text-purple-400">🤫 اختر شخصاً لتسكيت</CardTitle></CardHeader>
         <CardContent className="p-4">
-          <p className="text-xs text-muted-foreground mb-3">الشخص المسكّت لن يستطيع التصويت غداً</p>
+          <p className="text-xs text-muted-foreground mb-3">الشخص المسكّت لن يستطيع الدردشة غداً (ولكن يمكنه التصويت)</p>
           <div className="grid grid-cols-2 gap-3">
             {alivePlayers.filter(p => p.id !== playerId).map(player => (
               <Button key={player.id} variant={silenceTarget === player.id ? 'default' : 'outline'} className={`h-14 text-sm ${silenceTarget === player.id ? 'bg-purple-700 hover:bg-purple-600 border-purple-500' : 'border-purple-900/30 text-foreground hover:bg-purple-950/30'}`} onClick={() => setSilenceTarget(player.id)}>
@@ -1051,15 +1235,27 @@ export default function RoomPage() {
       <Card className="bg-card/70 backdrop-blur-sm border-green-900/30">
         <CardContent className="p-4">
           <div className="grid grid-cols-2 gap-3">
-            {alivePlayers.map(player => (
-              <Button key={player.id} variant={killTarget === player.id ? 'default' : 'outline'} className={`h-16 text-base ${killTarget === player.id ? 'bg-green-700 hover:bg-green-600 border-green-500' : 'border-green-900/30 text-foreground hover:bg-green-950/30'}`} onClick={() => setKillTarget(player.id)}>
-                💚 {player.name}
-              </Button>
-            ))}
+            {alivePlayers.map(player => {
+              const isSelf = player.id === playerId;
+              const isSelfSaveUsed = isSelf && game.doctorSelfSaveUsed;
+              const isLastSaved = game.lastDoctorSaveTarget === player.id;
+              const isDisabled = isSelfSaveUsed || isLastSaved;
+              let disabledReason = '';
+              if (isSelfSaveUsed) disabledReason = 'استخدمت إنقاذ نفسك';
+              if (isLastSaved) disabledReason = 'أنقذته الجولة السابقة';
+              return (
+                <Button key={player.id} variant={saveTarget === player.id ? 'default' : 'outline'} className={`h-16 text-base ${isDisabled ? 'opacity-50 cursor-not-allowed' : ''} ${saveTarget === player.id ? 'bg-green-700 hover:bg-green-600 border-green-500' : 'border-green-900/30 text-foreground hover:bg-green-950/30'}`} onClick={() => !isDisabled && setSaveTarget(player.id)} disabled={isDisabled}>
+                  <div className="text-center">
+                    <div>💚 {player.name}</div>
+                    {disabledReason && <div className="text-xs opacity-70">{disabledReason}</div>}
+                  </div>
+                </Button>
+              );
+            })}
           </div>
         </CardContent>
       </Card>
-      <Button onClick={() => handleNightAction('save')} disabled={!killTarget || actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-green-700 to-green-600">🛡️ إنقاذ</Button>
+      <Button onClick={() => handleNightAction('save')} disabled={!saveTarget || actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-green-700 to-green-600">🛡️ إنقاذ</Button>
     </motion.div>
   );
 
@@ -1186,7 +1382,7 @@ export default function RoomPage() {
             <div className="p-4 rounded-lg bg-purple-950/40 border border-purple-900/40 text-center">
               <div className="text-4xl mb-2">🤫</div>
               <p className="text-purple-400 font-bold text-xl">أنت مسكّت!</p>
-              <p className="text-muted-foreground text-sm">لن تستطيع التصويت هذه الجولة</p>
+              <p className="text-muted-foreground text-sm">لن تستطيع المشاركة في النقاش هذه الجولة (ولكن يمكنك التصويت)</p>
             </div>
           )}
           {game.lastNightSilenced.length > 0 && !game.lastNightSilenced.includes(playerId) && (
@@ -1223,7 +1419,7 @@ export default function RoomPage() {
           <CardContent className="p-6 text-center">
             <div className="text-5xl mb-2">🤫</div>
             <p className="text-purple-400 font-bold text-xl">أنت مسكّت!</p>
-            <p className="text-muted-foreground">لن تستطيع التصويت أو الدردشة هذه الجولة</p>
+            <p className="text-muted-foreground">لن تستطيع المشاركة في النقاش هذه الجولة (ولكن يمكنك التصويت)</p>
           </CardContent>
         </Card>
       )}
@@ -1267,6 +1463,7 @@ export default function RoomPage() {
     </motion.div>
   );
 
+  // CHANGE 3: Silenced players CAN vote
   const renderPlayerDayVoting = () => {
     const myVote = game.votes?.[playerId];
     const hasVoted = !!myVote;
@@ -1279,17 +1476,18 @@ export default function RoomPage() {
           <h2 className="text-3xl font-bold">صوّت لإبعاد شخص</h2>
         </div>
 
-        {isSilenced ? (
-          <Card className="bg-purple-950/40 border-purple-900/40">
-            <CardContent className="p-8 text-center">
-              <div className="text-6xl mb-3">🤫</div>
-              <p className="text-purple-400 font-bold text-xl">أنت مسكّت!</p>
-              <p className="text-muted-foreground">لا يمكنك التصويت هذه الجولة</p>
+        {isSilenced && (
+          <Card className="bg-purple-950/30 border-purple-900/30">
+            <CardContent className="p-3 text-center">
+              <p className="text-purple-400 text-sm">🤫 أنت مسكّت - يمكنك التصويت ولكن لا يمكنك الدردشة</p>
             </CardContent>
           </Card>
-        ) : game.playerIsAlive ? (
+        )}
+
+        {game.playerIsAlive ? (
           !hasVoted ? (
             <>
+              {renderVotingTimer()}
               <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
                 <CardContent className="p-4">
                   <div className="grid grid-cols-2 gap-3">
@@ -1324,7 +1522,7 @@ export default function RoomPage() {
         {(game.voteCount ?? 0) > 0 && (
           <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
             <CardContent className="p-4">
-              <p className="text-sm text-muted-foreground text-center">🗳️ تم التصويت: {game.voteCount ?? 0} / {alivePlayers.filter(p => !p.isSilenced).length}</p>
+              <p className="text-sm text-muted-foreground text-center">🗳️ تم التصويت: {game.voteCount ?? 0} / {alivePlayers.length}</p>
             </CardContent>
           </Card>
         )}
@@ -1336,8 +1534,7 @@ export default function RoomPage() {
   };
 
   const renderPlayerVoteResult = () => {
-    const accused = (game as any).accusedPlayers || [];
-    const isTie = (game as any).isTie || false;
+    const isTie = game.isTie || false;
     const isAccused = accused.includes(playerId);
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
@@ -1384,8 +1581,8 @@ export default function RoomPage() {
     );
   };
 
+  // CHANGE 6: Text-based justification
   const renderPlayerJustification = () => {
-    const accused = (game as any).accusedPlayers || [];
     const isAccused = accused.includes(playerId);
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
@@ -1393,24 +1590,20 @@ export default function RoomPage() {
           <Badge variant="outline" className="border-orange-800/40 text-orange-400 mb-3">🎤 وقت التبرير</Badge>
           <h2 className="text-3xl font-bold text-orange-400">الدفاع عن النفس</h2>
         </div>
-        {isAccused ? (
-          <Card className="border-2 border-orange-500 bg-orange-950/30">
-            <CardContent className="p-8 text-center space-y-4">
-              <div className="text-6xl">🎤</div>
-              <h3 className="text-2xl font-bold text-orange-400">أنت متهم! برّر نفسك!</h3>
-              <p className="text-muted-foreground">الوقت المتبقي لتبريرك:</p>
-              <p className="text-5xl font-mono font-bold text-yellow-400">
-                {Math.floor(justificationTimer / 60)}:{(justificationTimer % 60).toString().padStart(2, '0')}
-              </p>
-              <Progress value={(justificationTimer / (game.justificationTime || 60)) * 100} className="mt-3 h-2" />
-            </CardContent>
-          </Card>
-        ) : (
+        {/* Justification chat - accused can send, others read only */}
+        {renderJustificationChat(isAccused)}
+        <Card className="bg-card/70 backdrop-blur-sm border-orange-900/30">
+          <CardContent className="p-4 text-center">
+            <p className="text-4xl font-mono font-bold text-yellow-400">
+              {Math.floor(justificationTimer / 60)}:{(justificationTimer % 60).toString().padStart(2, '0')}
+            </p>
+            <Progress value={(justificationTimer / (game.justificationTime || 60)) * 100} className="mt-3 h-2" />
+          </CardContent>
+        </Card>
+        {!isAccused && (
           <Card className="bg-card/70 backdrop-blur-sm border-orange-900/30">
-            <CardContent className="p-12 text-center">
-              <motion.div animate={{ opacity: [0.3, 1, 0.3] }} transition={{ duration: 3, repeat: Infinity }} className="text-8xl">🎤</motion.div>
-              <p className="text-xl text-muted-foreground mt-6">المتهمون يبررون أنفسهم...</p>
-              <p className="text-muted-foreground text-sm mt-2">استمع جيداً قبل إعادة التصويت</p>
+            <CardContent className="p-6 text-center">
+              <p className="text-muted-foreground">استمع جيداً لدفاع المتهمين قبل إعادة التصويت</p>
             </CardContent>
           </Card>
         )}
@@ -1418,17 +1611,20 @@ export default function RoomPage() {
     );
   };
 
+  // CHANGE 7+8: Revote on ANY alive player + Accused can vote (but not on self)
   const renderPlayerDayRevoting = () => {
-    const accused = (game as any).accusedPlayers || [];
-    const revotes = (game as any).revotes || {};
+    const revotes = game.revotes || {};
     const myRevote = revotes[playerId];
     const hasRevoted = !!myRevote;
+    const isAccused = accused.includes(playerId);
+    const isSilenced = game.playerIsSilenced;
+
     if (!game.playerIsAlive) {
       return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
           <div className="text-center">
             <Badge variant="outline" className="border-red-900/40 text-red-400 mb-3">🗳️ إعادة التصويت</Badge>
-            <h2 className="text-3xl font-bold">إعادة التصويت على المتهمين</h2>
+            <h2 className="text-3xl font-bold">إعادة التصويت</h2>
           </div>
           <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
             <CardContent className="p-8 text-center">
@@ -1439,47 +1635,56 @@ export default function RoomPage() {
         </motion.div>
       );
     }
-    if (game.playerIsSilenced) {
-      return (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-          <div className="text-center">
-            <Badge variant="outline" className="border-purple-800/40 text-purple-400 mb-3">🗳️ إعادة التصويت</Badge>
-            <h2 className="text-3xl font-bold">إعادة التصويت على المتهمين</h2>
-          </div>
-          <Card className="border-2 border-purple-500 bg-purple-950/30">
-            <CardContent className="p-8 text-center space-y-3">
-              <div className="text-6xl">🤫</div>
-              <h3 className="text-2xl font-bold text-purple-400">أنت مسكّت!</h3>
-              <p className="text-muted-foreground">لا يمكنك التصويت هذه الجولة</p>
-            </CardContent>
-          </Card>
-        </motion.div>
-      );
-    }
+
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
         <div className="text-center">
           <Badge variant="outline" className="border-red-900/40 text-red-400 mb-3">🗳️ إعادة التصويت - الجولة {game.round}</Badge>
-          <h2 className="text-3xl font-bold">صوّت على المتهمين فقط</h2>
+          <h2 className="text-3xl font-bold">صوّت لإبعاد شخص</h2>
         </div>
-        {!hasRevoted ? (
-          <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
-            <CardContent className="p-4">
-              <div className="grid grid-cols-1 gap-3">
-                {accused.map((id: string) => {
-                  const p = game.players.find(pl => pl.id === id);
-                  return (
-                    <Button key={id} variant={revoteTarget === id ? 'default' : 'outline'} className={`h-14 text-base ${revoteTarget === id ? 'bg-red-700 hover:bg-red-600 border-red-500' : 'border-red-900/30 text-foreground hover:bg-red-950/30'}`} onClick={() => setRevoteTarget(id)}>
-                      🎯 {p?.name}
-                    </Button>
-                  );
-                })}
-                <Button variant={revoteTarget === 'skip' ? 'default' : 'outline'} className={`h-14 text-base ${revoteTarget === 'skip' ? 'bg-gray-700 hover:bg-gray-600' : 'border-gray-900/30 text-foreground hover:bg-gray-950/30'}`} onClick={() => setRevoteTarget('skip')}>
-                  ⏭️ تخطي
-                </Button>
-              </div>
+
+        {isSilenced && (
+          <Card className="bg-purple-950/30 border-purple-900/30">
+            <CardContent className="p-3 text-center">
+              <p className="text-purple-400 text-sm">🤫 أنت مسكّت - يمكنك التصويت ولكن لا يمكنك الدردشة</p>
             </CardContent>
           </Card>
+        )}
+
+        {isAccused && (
+          <Card className="bg-orange-950/30 border-orange-900/30">
+            <CardContent className="p-3 text-center">
+              <p className="text-orange-400 text-sm">⚠️ أنت متهم - يمكنك التصويت على أي شخص آخر</p>
+            </CardContent>
+          </Card>
+        )}
+
+        {!hasRevoted ? (
+          <>
+            {renderVotingTimer()}
+            <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
+              <CardContent className="p-4">
+                <div className="grid grid-cols-2 gap-3">
+                  {alivePlayers.filter(p => p.id !== playerId).map(player => {
+                    const isPlayerAccused = accused.includes(player.id);
+                    return (
+                      <Button key={player.id} variant={revoteTarget === player.id ? 'default' : 'outline'} className={`h-14 text-base relative ${revoteTarget === player.id ? 'bg-red-700 hover:bg-red-600 border-red-500' : 'border-red-900/30 text-foreground hover:bg-red-950/30'}`} onClick={() => setRevoteTarget(player.id)}>
+                        <div>
+                          {isPlayerAccused && <span className="text-xs text-orange-400 ml-1">⚠️ متهم</span>}
+                          <span>👆 {player.name}</span>
+                        </div>
+                      </Button>
+                    );
+                  })}
+                </div>
+                <div className="mt-4">
+                  <Button variant={revoteTarget === 'skip' ? 'default' : 'outline'} className={`w-full h-12 ${revoteTarget === 'skip' ? 'bg-gray-700 hover:bg-gray-600' : 'border-gray-900/30 text-foreground hover:bg-gray-950/30'}`} onClick={() => setRevoteTarget('skip')}>
+                    ⏭️ تخطي
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </>
         ) : (
           <Card className="bg-card/70 backdrop-blur-sm border-green-900/30">
             <CardContent className="p-8 text-center space-y-3">

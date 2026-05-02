@@ -1,4 +1,4 @@
-import { GameState, generateRoomCode, generatePlayerId, distributeRoles, checkWinCondition, GamePhase, MafiaChatMessage, PublicChatMessage } from './game-types';
+import { GameState, generateRoomCode, generatePlayerId, distributeRoles, checkWinCondition, GamePhase, MafiaChatMessage, PublicChatMessage, JustificationChatMessage } from './game-types';
 import { Redis } from '@upstash/redis';
 
 const GAME_PREFIX = 'spygame:';
@@ -66,7 +66,7 @@ export function isRedisConfigured(): boolean {
 }
 
 // ====== CREATE ROOM - Host is a spectator, NOT a player ======
-export async function createRoom(hostName: string): Promise<GameState> {
+export async function createRoom(hostName: string, options?: { isBotHost?: boolean }): Promise<GameState> {
   const code = generateRoomCode();
   const hostId = generatePlayerId();
 
@@ -103,6 +103,8 @@ export async function createRoom(hostName: string): Promise<GameState> {
     lastVoteEliminated: undefined,
     winner: undefined,
     discussionTime: 180,
+    votingTime: 120,
+    votingTimerStartedAt: undefined,
     nightActionsComplete: false,
     sniperDied: false,
     accusedPlayers: [],
@@ -111,6 +113,9 @@ export async function createRoom(hostName: string): Promise<GameState> {
     justificationTime: 60,
     mafiaChat: [],
     publicChat: [],
+    justificationChat: [],
+    isBotHost: options?.isBotHost || false,
+    lastDoctorSaveTargets: {},
   };
 
   await saveGame(game);
@@ -137,6 +142,7 @@ export async function joinRoom(code: string, playerName: string): Promise<GameSt
     isAlive: true,
     sniperUsed: false,
     isSilenced: false,
+    doctorSelfSaveUsed: false,
   });
 
   await saveGame(game);
@@ -161,7 +167,7 @@ export async function startGame(code: string, hostId: string): Promise<GameState
   return game;
 }
 
-export async function updateSettings(code: string, hostId: string, settings: { mafia: number; doctors: number; snipers: number; investigators: number; discussionTime?: number }): Promise<GameState | { error: string }> {
+export async function updateSettings(code: string, hostId: string, settings: { mafia: number; doctors: number; snipers: number; investigators: number; discussionTime?: number; votingTime?: number }): Promise<GameState | { error: string }> {
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
   if (game.hostId !== hostId) return { error: 'فقط المراقب يمكنه تعديل الإعدادات' };
@@ -179,6 +185,9 @@ export async function updateSettings(code: string, hostId: string, settings: { m
   };
   if (settings.discussionTime) {
     game.discussionTime = settings.discussionTime;
+  }
+  if (settings.votingTime) {
+    game.votingTime = settings.votingTime;
   }
 
   await saveGame(game);
@@ -217,6 +226,15 @@ export async function submitNightAction(
 
     case 'save':
       if (player.role !== 'doctor') return { error: 'فقط الطبيب يمكنه الإنقاذ' };
+      // Can't save yourself more than once per game
+      if (action.targetId === playerId) {
+        if (player.doctorSelfSaveUsed) return { error: 'لا يمكنك إنقاذ نفسك أكثر من مرة في اللعبة' };
+      }
+      // Can't save the same person two rounds in a row
+      const lastSave = game.lastDoctorSaveTargets[playerId];
+      if (lastSave && lastSave === action.targetId) {
+        return { error: 'لا يمكنك إنقاذ نفس الشخص مرتين متتاليتين' };
+      }
       game.nightActions.doctorSaves[playerId] = action.targetId;
       break;
 
@@ -379,7 +397,16 @@ export async function resolveNight(code: string, hostId: string): Promise<GameSt
     }
   }
 
-  // 7. Update game state
+  // 7. Update doctor save tracking
+  Object.entries(game.nightActions.doctorSaves).forEach(([docId, targetId]) => {
+    game.lastDoctorSaveTargets[docId] = targetId;
+    if (docId === targetId) {
+      const doc = game.players.find(p => p.id === docId);
+      if (doc) doc.doctorSelfSaveUsed = true;
+    }
+  });
+
+  // 8. Update game state
   game.lastNightKilled = [...new Set(killed)];
   game.lastNightSaved = saved;
   game.lastNightSniped = sniped;
@@ -420,6 +447,7 @@ export async function startVoting(code: string, hostId: string): Promise<GameSta
 
   game.phase = 'day-voting';
   game.votes = {};
+  game.votingTimerStartedAt = Date.now();
 
   await saveGame(game);
   return game;
@@ -433,8 +461,6 @@ export async function submitVote(code: string, playerId: string, targetId: strin
   const player = game.players.find(p => p.id === playerId);
   if (!player) return { error: 'اللاعب غير موجود' };
   if (!player.isAlive) return { error: 'لا يمكنك التصويت وأنت خارج اللعبة' };
-  if (player.isSilenced) return { error: 'أنت مسكّت ولا يمكنك التصويت هذه الجولة' };
-
   if (targetId !== 'skip') {
     const target = game.players.find(p => p.id === targetId);
     if (!target) return { error: 'الهدف غير موجود' };
@@ -510,6 +536,7 @@ export async function startJustification(code: string, hostId: string): Promise<
   if (game.accusedPlayers.length === 0) return { error: 'لا يوجد متهمون للتبرير' };
 
   game.phase = 'justification';
+  game.justificationChat = [];
 
   await saveGame(game);
   return game;
@@ -525,6 +552,7 @@ export async function startRevote(code: string, hostId: string): Promise<GameSta
 
   game.phase = 'day-revoting';
   game.revotes = {};
+  game.votingTimerStartedAt = Date.now();
 
   await saveGame(game);
   return game;
@@ -539,15 +567,10 @@ export async function submitRevote(code: string, playerId: string, targetId: str
   const player = game.players.find(p => p.id === playerId);
   if (!player) return { error: 'اللاعب غير موجود' };
   if (!player.isAlive) return { error: 'لا يمكنك التصويت وأنت خارج اللعبة' };
-  if (player.isSilenced) return { error: 'أنت مسكّت ولا يمكنك التصويت هذه الجولة' };
 
-  // BUG FIX 3: Accused players cannot vote in revote
-  if (game.accusedPlayers.includes(playerId)) return { error: 'المتهم لا يمكنه التصويت في إعادة التصويت' };
-
+  // Accused CAN vote in revote, but NOT on themselves
   if (targetId !== 'skip') {
-    // BUG FIX 4: Prevent self-voting in revote (accused already blocked above, but just in case)
     if (targetId === playerId) return { error: 'لا يمكنك التصويت ضد نفسك' };
-    if (!game.accusedPlayers.includes(targetId)) return { error: 'يمكنك التصويت فقط على المتهمين' };
     const target = game.players.find(p => p.id === targetId);
     if (!target || !target.isAlive) return { error: 'الهدف غير صالح' };
   }
@@ -643,6 +666,7 @@ export async function advanceFromRoleReveal(code: string, hostId: string): Promi
   game.sniperDied = false;
   // Clear mafia chat for new round
   game.mafiaChat = [];
+  game.justificationChat = [];
 
   await saveGame(game);
   return game;
@@ -678,6 +702,7 @@ export async function advanceToNight(code: string, hostId: string): Promise<Game
   game.sniperDied = false;
   // Clear mafia chat for new round
   game.mafiaChat = [];
+  game.justificationChat = [];
 
   await saveGame(game);
   return game;
@@ -752,6 +777,40 @@ export async function sendPublicChatMessage(code: string, playerId: string, mess
   return game;
 }
 
+// ====== JUSTIFICATION CHAT - Text-based defense for accused players ======
+export async function sendJustificationMessage(code: string, playerId: string, message: string): Promise<GameState | { error: string }> {
+  const game = await getGame(code);
+  if (!game) return { error: 'الغرفة غير موجودة' };
+  if (game.phase !== 'justification') return { error: 'ليس وقت التبرير' };
+
+  const player = game.players.find(p => p.id === playerId);
+  if (!player) return { error: 'اللاعب غير موجود' };
+  if (!player.isAlive) return { error: 'أنت خارج اللعبة' };
+
+  // Only accused players can send justification messages
+  if (!game.accusedPlayers.includes(playerId)) return { error: 'فقط المتهم يمكنه التبرير' };
+
+  if (!message.trim()) return { error: 'الرسالة فارغة' };
+  if (message.length > 1000) return { error: 'الرسالة طويلة جداً' };
+
+  const chatMsg: JustificationChatMessage = {
+    id: `just_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    senderId: playerId,
+    senderName: player.name,
+    message: message.trim(),
+    timestamp: Date.now(),
+    round: game.round,
+  };
+
+  game.justificationChat.push(chatMsg);
+  if (game.justificationChat.length > 100) {
+    game.justificationChat = game.justificationChat.slice(-100);
+  }
+
+  await saveGame(game);
+  return game;
+}
+
 export async function getPlayerInvestigation(code: string, playerId: string): Promise<{ isMafia: boolean } | { error: string }> {
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
@@ -804,8 +863,11 @@ export async function getPublicGameState(code: string, playerId?: string): Promi
     lastVoteEliminated: game.lastVoteEliminated,
     winner: game.winner,
     discussionTime: game.discussionTime,
+    votingTime: game.votingTime,
+    votingTimerStartedAt: game.votingTimerStartedAt,
     nightActionsComplete: game.nightActionsComplete,
     sniperDied: game.sniperDied,
+    isBotHost: game.isBotHost,
     // BUG FIX 1+2: Hide individual votes from players - only host sees full votes
     // Players only see: total count and their own vote
     votes: isHost
@@ -845,6 +907,8 @@ export async function getPublicGameState(code: string, playerId?: string): Promi
       if (dayPhases.includes(game.phase)) return game.publicChat;
       return [];
     })(),
+    // Justification chat: all players see during justification phase
+    justificationChat: game.phase === 'justification' ? game.justificationChat : [],
   };
 
   // Host-specific: show all night action details
@@ -871,6 +935,12 @@ export async function getPublicGameState(code: string, playerId?: string): Promi
         base.mafiaBuddies = game.players
           .filter(p => p.role === 'mafia' && p.id !== playerId)
           .map(p => p.name);
+      }
+
+      // Doctor-specific data
+      if (player.role === 'doctor') {
+        base.doctorSelfSaveUsed = player.doctorSelfSaveUsed;
+        base.lastDoctorSaveTarget = game.lastDoctorSaveTargets[playerId];
       }
 
       const investigation = game.nightActions.investigations.find(

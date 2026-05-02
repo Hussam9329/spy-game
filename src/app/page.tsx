@@ -18,6 +18,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [redisStatus, setRedisStatus] = useState<'checking' | 'ok' | 'not_configured'>('checking');
+  const [isBotHost, setIsBotHost] = useState(false);
 
   useEffect(() => {
     fetch('/api/health')
@@ -41,7 +42,7 @@ export default function HomePage() {
       const res = await fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hostName: hostName.trim() }),
+        body: JSON.stringify({ hostName: hostName.trim(), isBotHost }),
       });
       const data = await res.json();
       if (data.error) {
@@ -177,6 +178,16 @@ export default function HomePage() {
                   <div className="space-y-2">
                     <Label htmlFor="hostName" className="text-right block">اسمك (مراقب)</Label>
                     <Input id="hostName" placeholder="أدخل اسمك كمراقب..." value={hostName} onChange={(e) => setHostName(e.target.value)} className="text-right bg-input/50 border-red-900/30 focus:border-red-500" maxLength={20} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
+                  </div>
+                  <div className="flex items-center gap-3 justify-center">
+                    <input
+                      type="checkbox"
+                      id="botHost"
+                      checked={isBotHost}
+                      onChange={(e) => setIsBotHost(e.target.checked)}
+                      className="w-4 h-4 rounded border-red-900/40 accent-red-600"
+                    />
+                    <Label htmlFor="botHost" className="text-sm cursor-pointer">🤖 بوت المراقب (تقدم تلقائي)</Label>
                   </div>
                   <p className="text-xs text-muted-foreground text-center">المراقب يتحكم بسير اللعبة ويرى كل الأدوار لكنه لا يلعب</p>
                   {error && <p className="text-red-400 text-sm text-center">{error}</p>}
