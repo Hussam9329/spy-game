@@ -11,7 +11,7 @@ import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ROLE_INFO, type GamePhase, type Role, type MafiaChatMessage } from '@/lib/game-types';
+import { ROLE_INFO, type GamePhase, type Role, type MafiaChatMessage, type PublicChatMessage } from '@/lib/game-types';
 
 interface GamePlayer {
   id: string;
@@ -64,6 +64,7 @@ interface GameStateView {
   voteCount?: number;
   revoteCount?: number;
   mafiaChat?: MafiaChatMessage[];
+  publicChat?: PublicChatMessage[];
 }
 
 export default function RoomPage() {
@@ -87,6 +88,8 @@ export default function RoomPage() {
   const [currentJustifier, setCurrentJustifier] = useState(0);
   const [chatMessage, setChatMessage] = useState('');
   const [chatSending, setChatSending] = useState(false);
+  const [publicChatMessage, setPublicChatMessage] = useState('');
+  const [publicChatSending, setPublicChatSending] = useState(false);
 
   const isHost = game?.isHost === true;
 
@@ -224,6 +227,25 @@ export default function RoomPage() {
     }
   };
 
+  const handleSendPublicChat = async () => {
+    if (!publicChatMessage.trim() || publicChatSending) return;
+    setPublicChatSending(true);
+    try {
+      const res = await fetch(`/api/rooms/${code}/public-chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId, message: publicChatMessage }),
+      });
+      const data = await res.json();
+      if (data.error) { setError(data.error); }
+      else { setPublicChatMessage(''); await fetchGame(); }
+    } catch {
+      setError('خطأ في إرسال الرسالة');
+    } finally {
+      setPublicChatSending(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -343,6 +365,58 @@ export default function RoomPage() {
                 {chatSending ? '⏳' : '📤'}
               </Button>
             </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
+  // ====== PUBLIC CHAT COMPONENT (visible to all during day) ======
+  const renderPublicChat = (canSend: boolean = false) => {
+    const messages = game.publicChat || [];
+    return (
+      <Card className="bg-card/70 backdrop-blur-sm border-yellow-900/30">
+        <CardHeader><CardTitle className="text-lg text-yellow-400">💬 دردشة النقاش العام</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <ScrollArea className="h-56 rounded-lg bg-yellow-950/10 p-3">
+            {messages.length === 0 ? (
+              <p className="text-center text-muted-foreground text-sm">لا توجد رسائل بعد... ابدأ النقاش!</p>
+            ) : (
+              <div className="space-y-2">
+                {messages.map((msg) => (
+                  <div key={msg.id} className={`p-2 rounded-lg ${msg.senderId === playerId ? 'bg-yellow-900/20 ml-4' : 'bg-secondary/50 mr-4'}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-bold text-yellow-400">🕵️ {msg.senderName}</span>
+                      <span className="text-xs text-muted-foreground">{new Date(msg.timestamp).toLocaleTimeString('ar', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                    <p className="text-sm text-foreground leading-relaxed">{msg.message}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+          {canSend && (
+            <div className="flex gap-2">
+              <Input
+                value={publicChatMessage}
+                onChange={(e) => setPublicChatMessage(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendPublicChat(); } }}
+                placeholder="اكتب رسالتك هنا... شارك في النقاش!"
+                className="bg-input/50 text-sm"
+                maxLength={500}
+                disabled={publicChatSending}
+              />
+              <Button
+                onClick={handleSendPublicChat}
+                disabled={!publicChatMessage.trim() || publicChatSending}
+                className="bg-gradient-to-l from-yellow-700 to-yellow-600 px-4 shrink-0 text-black"
+              >
+                {publicChatSending ? '⏳' : '📤'}
+              </Button>
+            </div>
+          )}
+          {!canSend && messages.length === 0 && (
+            <p className="text-center text-muted-foreground text-xs">الدردشة ستكون متاحة خلال وقت النقاش</p>
           )}
         </CardContent>
       </Card>
@@ -617,6 +691,8 @@ export default function RoomPage() {
           </CardContent>
         </Card>
       )}
+      {/* Public chat - host can see but not send */}
+      {renderPublicChat(false)}
       <Card className="bg-card/70 backdrop-blur-sm border-yellow-900/20">
         <CardContent className="p-4">
           <p className="text-4xl font-mono font-bold text-yellow-400 text-center">
@@ -651,6 +727,8 @@ export default function RoomPage() {
         </Card>
       )}
       <p className="text-center text-muted-foreground">تم التصويت: {game.voteCount ?? (game.votes ? Object.keys(game.votes).length : 0)} / {alivePlayers.length}</p>
+      {/* Public chat - host can see during voting */}
+      {renderPublicChat(false)}
       <Button onClick={() => handleAdvance('resolve-votes')} disabled={actionLoading} variant="outline" className="w-full border-yellow-800/50 text-yellow-400">
         📊 إنهاء التصويت وإحصاء النتائج
       </Button>
@@ -925,7 +1003,7 @@ export default function RoomPage() {
         <p className="text-red-400/80 text-sm text-center">زملاؤك: {game.mafiaBuddies.join('، ')}</p>
       )}
 
-      {/* Mafia Chat - mafia can send and receive */}
+      {/* Mafia Private Chat - for coordinating kills and silencing */}
       {renderMafiaChat(true)}
 
       {/* Kill target */}
@@ -1145,10 +1223,12 @@ export default function RoomPage() {
           <CardContent className="p-6 text-center">
             <div className="text-5xl mb-2">🤫</div>
             <p className="text-purple-400 font-bold text-xl">أنت مسكّت!</p>
-            <p className="text-muted-foreground">لن تستطيع التصويت هذه الجولة</p>
+            <p className="text-muted-foreground">لن تستطيع التصويت أو الدردشة هذه الجولة</p>
           </CardContent>
         </Card>
       )}
+      {/* Public chat - all alive non-silenced players can send */}
+      {renderPublicChat(!!(game.playerIsAlive && !game.playerIsSilenced))}
       <Card className="bg-card/70 backdrop-blur-sm border-yellow-900/20">
         <CardContent className="p-4">
           <p className="text-4xl font-mono font-bold text-yellow-400 text-center">
@@ -1248,6 +1328,9 @@ export default function RoomPage() {
             </CardContent>
           </Card>
         )}
+
+        {/* Public chat - read only during voting */}
+        {renderPublicChat(false)}
       </motion.div>
     );
   };

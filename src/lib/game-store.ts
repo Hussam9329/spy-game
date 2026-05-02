@@ -1,4 +1,4 @@
-import { GameState, generateRoomCode, generatePlayerId, distributeRoles, checkWinCondition, GamePhase, MafiaChatMessage } from './game-types';
+import { GameState, generateRoomCode, generatePlayerId, distributeRoles, checkWinCondition, GamePhase, MafiaChatMessage, PublicChatMessage } from './game-types';
 import { Redis } from '@upstash/redis';
 
 const GAME_PREFIX = 'spygame:';
@@ -110,6 +110,7 @@ export async function createRoom(hostName: string): Promise<GameState> {
     revotes: {},
     justificationTime: 60,
     mafiaChat: [],
+    publicChat: [],
   };
 
   await saveGame(game);
@@ -715,6 +716,42 @@ export async function sendMafiaChatMessage(code: string, playerId: string, messa
   return game;
 }
 
+// ====== PUBLIC CHAT - Chat for all players during day ======
+export async function sendPublicChatMessage(code: string, playerId: string, message: string): Promise<GameState | { error: string }> {
+  const game = await getGame(code);
+  if (!game) return { error: 'الغرفة غير موجودة' };
+
+  // Public chat available during day phases
+  const dayPhases: GamePhase[] = ['day-discussion', 'day-voting', 'vote-result', 'justification', 'day-revoting', 'final-vote-result'];
+  if (!dayPhases.includes(game.phase)) return { error: 'الدردشة العامة متاحة فقط خلال النهار' };
+
+  const player = game.players.find(p => p.id === playerId);
+  if (!player) return { error: 'اللاعب غير موجود' };
+  if (!player.isAlive) return { error: 'أنت خارج اللعبة' };
+  if (player.isSilenced) return { error: 'أنت مسكّت ولا يمكنك الدردشة' };
+  if (!message.trim()) return { error: 'الرسالة فارغة' };
+  if (message.length > 500) return { error: 'الرسالة طويلة جداً' };
+
+  const chatMsg: PublicChatMessage = {
+    id: `pub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    senderId: playerId,
+    senderName: player.name,
+    message: message.trim(),
+    timestamp: Date.now(),
+    round: game.round,
+  };
+
+  game.publicChat.push(chatMsg);
+
+  // Keep only last 200 messages to avoid Redis bloat
+  if (game.publicChat.length > 200) {
+    game.publicChat = game.publicChat.slice(-200);
+  }
+
+  await saveGame(game);
+  return game;
+}
+
 export async function getPlayerInvestigation(code: string, playerId: string): Promise<{ isMafia: boolean } | { error: string }> {
   const game = await getGame(code);
   if (!game) return { error: 'الغرفة غير موجودة' };
@@ -798,6 +835,14 @@ export async function getPublicGameState(code: string, playerId?: string): Promi
         const p = game.players.find(pl => pl.id === playerId);
         if (p?.role === 'mafia') return game.mafiaChat;
       }
+      return [];
+    })(),
+    // Public chat: all players see during day phases, host sees always
+    publicChat: (() => {
+      if (isHost) return game.publicChat;
+      // Players see public chat during day phases
+      const dayPhases: GamePhase[] = ['day-discussion', 'day-voting', 'vote-result', 'justification', 'day-revoting', 'final-vote-result'];
+      if (dayPhases.includes(game.phase)) return game.publicChat;
       return [];
     })(),
   };
