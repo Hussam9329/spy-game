@@ -89,7 +89,7 @@ export default function HomePage() {
   };
 
   const handleCreate = async () => {
-    if (!hostName.trim()) {
+    if (!isBotHost && !hostName.trim()) {
       setError('الرجاء إدخال اسمك كمراقب');
       return;
     }
@@ -99,7 +99,7 @@ export default function HomePage() {
       const res = await fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hostName: hostName.trim(), isBotHost }),
+        body: JSON.stringify({ hostName: isBotHost ? '🤖 بوت المراقب' : hostName.trim(), isBotHost }),
       });
       const data = await res.json();
       if (data.error) {
@@ -655,10 +655,6 @@ export default function HomePage() {
                   <CardTitle className="text-center text-red-400">🎮 إنشاء غرفة جديدة</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="hostName" className="text-right block">اسمك (مراقب)</Label>
-                    <Input id="hostName" placeholder="أدخل اسمك كمراقب..." value={hostName} onChange={(e) => setHostName(e.target.value)} className="text-right bg-input/50 border-red-900/30 focus:border-red-500" maxLength={20} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
-                  </div>
                   <div className="flex items-center gap-3 justify-center">
                     <input
                       type="checkbox"
@@ -669,6 +665,17 @@ export default function HomePage() {
                     />
                     <Label htmlFor="botHost" className="text-sm cursor-pointer">🤖 بوت المراقب (تقدم تلقائي)</Label>
                   </div>
+                  {!isBotHost && (
+                    <div className="space-y-2">
+                      <Label htmlFor="hostName" className="text-right block">اسمك (مراقب)</Label>
+                      <Input id="hostName" placeholder="أدخل اسمك كمراقب..." value={hostName} onChange={(e) => setHostName(e.target.value)} className="text-right bg-input/50 border-red-900/30 focus:border-red-500" maxLength={20} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
+                    </div>
+                  )}
+                  {isBotHost && (
+                    <div className="p-3 rounded-lg bg-purple-950/30 border border-purple-800/30 text-center">
+                      <p className="text-sm text-purple-300">🤖 البوت سيقوم بإدارة اللعبة تلقائياً</p>
+                    </div>
+                  )}
                   <p className="text-xs text-muted-foreground text-center">المراقب يتحكم بسير اللعبة ويرى كل الأدوار لكنه لا يلعب</p>
                   {error && <p className="text-red-400 text-sm text-center">{error}</p>}
                   <div className="flex gap-3">
