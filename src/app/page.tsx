@@ -632,8 +632,7 @@ export default function HomePage() {
                     📲 تثبيت التطبيق
                   </Button>
                 </motion.div>
-              )
-              </Button>
+              )}
             </motion.div>
           ) : showCreate ? (
             <motion.div key="create" initial={{ opacity: 0, x: -30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 30 }} className="w-full">
