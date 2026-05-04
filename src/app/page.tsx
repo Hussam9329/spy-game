@@ -10,6 +10,12 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { motion, AnimatePresence } from 'framer-motion';
 
+// PWA install prompt type
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
 export default function HomePage() {
   const router = useRouter();
   const [showCreate, setShowCreate] = useState(false);
@@ -22,6 +28,8 @@ export default function HomePage() {
   const [error, setError] = useState('');
   const [redisStatus, setRedisStatus] = useState<'checking' | 'ok' | 'not_configured'>('checking');
   const [isBotHost, setIsBotHost] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isInstalled, setIsInstalled] = useState(false);
 
   useEffect(() => {
     fetch('/api/health')
@@ -33,6 +41,42 @@ export default function HomePage() {
         setRedisStatus('not_configured');
       });
   }, []);
+
+  // PWA install prompt handler
+  useEffect(() => {
+    // Check if already installed
+    if (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone) {
+      setIsInstalled(true);
+      return;
+    }
+
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(e as BeforeInstallPromptEvent);
+    };
+
+    window.addEventListener('beforeinstallprompt', handler);
+
+    // Listen for successful install
+    window.addEventListener('appinstalled', () => {
+      setIsInstalled(true);
+      setInstallPrompt(null);
+    });
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handler);
+    };
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setIsInstalled(true);
+      setInstallPrompt(null);
+    }
+  };
 
   const handleCreate = async () => {
     if (!hostName.trim()) {
@@ -580,6 +624,15 @@ export default function HomePage() {
               </Button>
               <Button onClick={() => setShowGuide(true)} size="lg" variant="outline" className="h-14 text-lg font-bold border-yellow-900/40 text-yellow-400 hover:bg-yellow-950/30 hover:text-yellow-300 transition-all duration-300 hover:scale-105">
                 📖 تعليمات اللعبة
+              </Button>
+              {/* PWA Install Button */}
+              {installPrompt && !isInstalled && (
+                <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="w-full">
+                  <Button onClick={handleInstallApp} size="lg" className="h-14 text-lg font-bold w-full bg-gradient-to-l from-purple-700 to-purple-600 hover:from-purple-600 hover:to-purple-500 shadow-lg shadow-purple-900/30 transition-all duration-300 hover:scale-105">
+                    📲 تثبيت التطبيق
+                  </Button>
+                </motion.div>
+              )
               </Button>
             </motion.div>
           ) : showCreate ? (
