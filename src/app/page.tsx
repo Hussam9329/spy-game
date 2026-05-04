@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { motion, AnimatePresence } from 'framer-motion';
+import IOSInstallModal from '@/components/IOSInstallModal';
 
 // PWA install prompt type
 interface BeforeInstallPromptEvent extends Event {
@@ -30,6 +31,8 @@ export default function HomePage() {
   const [isBotHost, setIsBotHost] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const [showIOSInstall, setShowIOSInstall] = useState(false);
 
   useEffect(() => {
     fetch('/api/health')
@@ -48,6 +51,13 @@ export default function HomePage() {
     if (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone) {
       setIsInstalled(true);
       return;
+    }
+
+    // Detect iOS Safari
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (isIOSDevice && isSafari) {
+      setIsIOS(true);
     }
 
     const handler = (e: Event) => {
@@ -625,11 +635,15 @@ export default function HomePage() {
               <Button onClick={() => setShowGuide(true)} size="lg" variant="outline" className="h-14 text-lg font-bold border-yellow-900/40 text-yellow-400 hover:bg-yellow-950/30 hover:text-yellow-300 transition-all duration-300 hover:scale-105">
                 📖 تعليمات اللعبة
               </Button>
-              {/* PWA Install Button */}
-              {installPrompt && !isInstalled && (
+              {/* PWA Install Button - shows on both Android and iOS */}
+              {!isInstalled && (installPrompt || isIOS) && (
                 <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="w-full">
-                  <Button onClick={handleInstallApp} size="lg" className="h-14 text-lg font-bold w-full bg-gradient-to-l from-purple-700 to-purple-600 hover:from-purple-600 hover:to-purple-500 shadow-lg shadow-purple-900/30 transition-all duration-300 hover:scale-105">
-                    📲 تثبيت التطبيق
+                  <Button 
+                    onClick={isIOS ? () => setShowIOSInstall(true) : handleInstallApp} 
+                    size="lg" 
+                    className="h-14 text-lg font-bold w-full bg-gradient-to-l from-purple-700 to-purple-600 hover:from-purple-600 hover:to-purple-500 shadow-lg shadow-purple-900/30 transition-all duration-300 hover:scale-105"
+                  >
+                    📲 تحميل التطبيق
                   </Button>
                 </motion.div>
               )}
@@ -718,6 +732,9 @@ export default function HomePage() {
           </p>
         </motion.div>
       </div>
+
+      {/* iOS Install Instruction Modal */}
+      <IOSInstallModal show={showIOSInstall} onClose={() => setShowIOSInstall(false)} />
     </div>
   );
 }
