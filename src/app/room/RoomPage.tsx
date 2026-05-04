@@ -111,6 +111,7 @@ export default function RoomPage() {
   const justificationChatEndRef = useRef<HTMLDivElement>(null);
 
   const isHost = game?.isHost === true;
+  const isSpectator = isHost && game?.isBotHost === true; // Bot is host - user is just a spectator
 
   // Auto-scroll effects
   useEffect(() => {
@@ -219,6 +220,12 @@ export default function RoomPage() {
   // Bot host auto-advance
   useEffect(() => {
     if (!game?.isBotHost || !isHost) return;
+
+    // Auto-start game when 8+ players have joined
+    if (game.phase === 'waiting' && game.players.length >= 8) {
+      const timer = setTimeout(() => handleStartGame(), 3000);
+      return () => clearTimeout(timer);
+    }
 
     if (game.phase === 'role-reveal') {
       const timer = setTimeout(() => handleAdvance('start-night'), 5000);
@@ -444,9 +451,13 @@ export default function RoomPage() {
   // ====== SHARED HEADER ======
   const renderHeader = () => (
     <div className="text-center mb-4 space-y-1">
-      <Badge variant="outline" className="border-red-900/40 text-red-400">
-        {isHost ? '👁️ المراقب' : `🎮 ${myPlayer?.name || 'لاعب'}`}
-      </Badge>
+      {isSpectator ? (
+        <Badge variant="outline" className="border-purple-900/40 text-purple-400">🤖 مشاهد</Badge>
+      ) : isHost ? (
+        <Badge variant="outline" className="border-red-900/40 text-red-400">👁️ المراقب</Badge>
+      ) : (
+        <Badge variant="outline" className="border-red-900/40 text-red-400">🎮 {myPlayer?.name || 'لاعب'}</Badge>
+      )}
       {game.round > 0 && <Badge variant="outline" className="border-yellow-900/40 text-yellow-400 mr-1">الجولة {game.round}</Badge>}
       {game.isBotHost && <Badge variant="outline" className="border-purple-900/40 text-purple-400 mr-1">🤖 بوت</Badge>}
     </div>
@@ -648,8 +659,22 @@ export default function RoomPage() {
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
       <div className="text-center">
         <h2 className="text-3xl font-bold mb-2">غرفة الانتظار</h2>
-        <p className="text-muted-foreground">أنت المراقب - انتظر انضمام اللاعبين ثم ابدأ اللعبة</p>
+        {isSpectator ? (
+          <p className="text-purple-400">🤖 البوت يدير اللعبة تلقائياً - شارك الرمز مع اللاعبين</p>
+        ) : (
+          <p className="text-muted-foreground">أنت المراقب - انتظر انضمام اللاعبين ثم ابدأ اللعبة</p>
+        )}
       </div>
+
+      {isSpectator && (
+        <Card className="bg-purple-950/30 border-purple-800/30">
+          <CardContent className="p-4 text-center space-y-2">
+            <div className="text-4xl">🤖</div>
+            <p className="text-purple-300 font-bold">وضع البوت التلقائي</p>
+            <p className="text-sm text-muted-foreground">اللعبة ستبدأ تلقائياً عند اكتمال 8 لاعبين</p>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
         <CardContent className="p-6 text-center">
@@ -676,46 +701,48 @@ export default function RoomPage() {
         </CardContent>
       </Card>
 
-      <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
-        <CardHeader><CardTitle className="text-lg">⚙️ إعدادات اللعبة</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label className="text-right block text-sm">عدد المافيا 🔴</Label>
-              <Input type="number" min={1} max={Math.floor(game.players.length / 2)} value={settingsForm.mafia} onChange={(e) => setSettingsForm(prev => ({ ...prev, mafia: Number(e.target.value) }))} className="text-center bg-input/50" />
+      {!isSpectator && (
+        <Card className="bg-card/70 backdrop-blur-sm border-red-900/30">
+          <CardHeader><CardTitle className="text-lg">⚙️ إعدادات اللعبة</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-right block text-sm">عدد المافيا 🔴</Label>
+                <Input type="number" min={1} max={Math.floor(game.players.length / 2)} value={settingsForm.mafia} onChange={(e) => setSettingsForm(prev => ({ ...prev, mafia: Number(e.target.value) }))} className="text-center bg-input/50" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-right block text-sm">عدد الأطباء 💚</Label>
+                <Input type="number" min={0} max={game.players.length - 2} value={settingsForm.doctors} onChange={(e) => setSettingsForm(prev => ({ ...prev, doctors: Number(e.target.value) }))} className="text-center bg-input/50" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-right block text-sm">عدد القناصين 🔵</Label>
+                <Input type="number" min={0} max={game.players.length - 2} value={settingsForm.snipers} onChange={(e) => setSettingsForm(prev => ({ ...prev, snipers: Number(e.target.value) }))} className="text-center bg-input/50" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-right block text-sm">عدد المحققين 🟡</Label>
+                <Input type="number" min={0} max={game.players.length - 2} value={settingsForm.investigators} onChange={(e) => setSettingsForm(prev => ({ ...prev, investigators: Number(e.target.value) }))} className="text-center bg-input/50" />
+              </div>
             </div>
             <div className="space-y-2">
-              <Label className="text-right block text-sm">عدد الأطباء 💚</Label>
-              <Input type="number" min={0} max={game.players.length - 2} value={settingsForm.doctors} onChange={(e) => setSettingsForm(prev => ({ ...prev, doctors: Number(e.target.value) }))} className="text-center bg-input/50" />
+              <Label className="text-right block text-sm">وقت النقاش (ثواني) ☀️</Label>
+              <Input type="number" min={30} max={600} value={settingsForm.discussionTime} onChange={(e) => setSettingsForm(prev => ({ ...prev, discussionTime: Number(e.target.value) }))} className="text-center bg-input/50" />
             </div>
             <div className="space-y-2">
-              <Label className="text-right block text-sm">عدد القناصين 🔵</Label>
-              <Input type="number" min={0} max={game.players.length - 2} value={settingsForm.snipers} onChange={(e) => setSettingsForm(prev => ({ ...prev, snipers: Number(e.target.value) }))} className="text-center bg-input/50" />
+              <Label className="text-right block text-sm">وقت التصويت (ثواني) 🗳️</Label>
+              <Input type="number" min={30} max={300} value={settingsForm.votingTime} onChange={(e) => setSettingsForm(prev => ({ ...prev, votingTime: Number(e.target.value) }))} className="text-center bg-input/50" />
             </div>
-            <div className="space-y-2">
-              <Label className="text-right block text-sm">عدد المحققين 🟡</Label>
-              <Input type="number" min={0} max={game.players.length - 2} value={settingsForm.investigators} onChange={(e) => setSettingsForm(prev => ({ ...prev, investigators: Number(e.target.value) }))} className="text-center bg-input/50" />
+            <div className="text-center space-y-1">
+              <p className="text-sm text-muted-foreground">المواطنون الصالحون ⚪: {Math.max(0, game.players.length - settingsForm.mafia - settingsForm.doctors - settingsForm.snipers - settingsForm.investigators)}</p>
+              {(settingsForm.mafia + settingsForm.doctors + settingsForm.snipers + settingsForm.investigators) >= game.players.length && (
+                <p className="text-red-400 text-sm">⚠️ عدد الأدوار يتجاوز عدد اللاعبين!</p>
+              )}
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-right block text-sm">وقت النقاش (ثواني) ☀️</Label>
-            <Input type="number" min={30} max={600} value={settingsForm.discussionTime} onChange={(e) => setSettingsForm(prev => ({ ...prev, discussionTime: Number(e.target.value) }))} className="text-center bg-input/50" />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-right block text-sm">وقت التصويت (ثواني) 🗳️</Label>
-            <Input type="number" min={30} max={300} value={settingsForm.votingTime} onChange={(e) => setSettingsForm(prev => ({ ...prev, votingTime: Number(e.target.value) }))} className="text-center bg-input/50" />
-          </div>
-          <div className="text-center space-y-1">
-            <p className="text-sm text-muted-foreground">المواطنون الصالحون ⚪: {Math.max(0, game.players.length - settingsForm.mafia - settingsForm.doctors - settingsForm.snipers - settingsForm.investigators)}</p>
-            {(settingsForm.mafia + settingsForm.doctors + settingsForm.snipers + settingsForm.investigators) >= game.players.length && (
-              <p className="text-red-400 text-sm">⚠️ عدد الأدوار يتجاوز عدد اللاعبين!</p>
-            )}
-          </div>
-          <Button onClick={handleUpdateSettings} variant="outline" className="w-full border-red-900/40 text-red-400" disabled={actionLoading}>حفظ الإعدادات</Button>
-        </CardContent>
-      </Card>
+            <Button onClick={handleUpdateSettings} variant="outline" className="w-full border-red-900/40 text-red-400" disabled={actionLoading}>حفظ الإعدادات</Button>
+          </CardContent>
+        </Card>
+      )}
 
-      {game.players.length >= 8 && (
+      {!isSpectator && game.players.length >= 8 && (
         <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
           <Button onClick={handleStartGame} disabled={actionLoading} size="lg" className="w-full h-16 text-xl font-bold bg-gradient-to-l from-red-700 to-red-600 hover:from-red-600 hover:to-red-500 shadow-lg shadow-red-900/40 animate-pulse-glow">
             🎮 بدء اللعبة
@@ -729,12 +756,18 @@ export default function RoomPage() {
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
       <div className="text-center">
         <h2 className="text-3xl font-bold mb-2">كشف الأدوار</h2>
-        <p className="text-muted-foreground">أنت ترى كل الأدوار - انتظر حتى يكشف اللاعبون أدوارهم</p>
+        {isSpectator ? (
+          <p className="text-purple-400">🤖 البوت سينتقل تلقائياً بعد قليل...</p>
+        ) : (
+          <p className="text-muted-foreground">أنت ترى كل الأدوار - انتظر حتى يكشف اللاعبون أدوارهم</p>
+        )}
       </div>
       {renderAllRolesPanel()}
-      <Button onClick={() => handleAdvance('start-night')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
-        ☀️ الانتقال للنقاش الأولي
-      </Button>
+      {!isSpectator && (
+        <Button onClick={() => handleAdvance('start-night')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
+          ☀️ الانتقال للنقاش الأولي
+        </Button>
+      )}
     </motion.div>
   );
 
@@ -806,9 +839,18 @@ export default function RoomPage() {
       {/* Mafia chat - host can see but not send */}
       {renderMafiaChat(false)}
 
-      <Button onClick={() => handleAdvance('resolve-night')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
-        ☀️ إنهاء الليل وإعلان النتائج
-      </Button>
+      {!isSpectator && (
+        <Button onClick={() => handleAdvance('resolve-night')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
+          ☀️ إنهاء الليل وإعلان النتائج
+        </Button>
+      )}
+      {isSpectator && game.nightActionsComplete && (
+        <Card className="bg-purple-950/30 border-purple-800/30">
+          <CardContent className="p-4 text-center">
+            <p className="text-purple-300">🤖 البوت سينهي الليل تلقائياً...</p>
+          </CardContent>
+        </Card>
+      )}
     </motion.div>
   );
 
@@ -870,9 +912,18 @@ export default function RoomPage() {
         </CardContent>
       </Card>
 
-      <Button onClick={() => handleAdvance('advance-to-day')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
-        ☀️ الانتقال للنهار
-      </Button>
+      {!isSpectator && (
+        <Button onClick={() => handleAdvance('advance-to-day')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
+          ☀️ الانتقال للنهار
+        </Button>
+      )}
+      {isSpectator && (
+        <Card className="bg-purple-950/30 border-purple-800/30">
+          <CardContent className="p-4 text-center">
+            <p className="text-purple-300">🤖 البوت سينتقل للنهار تلقائياً...</p>
+          </CardContent>
+        </Card>
+      )}
     </motion.div>
   );
 
@@ -922,9 +973,18 @@ export default function RoomPage() {
           <Progress value={(discussionTimer / (game.discussionTime || 180)) * 100} className="mt-3 h-2" />
         </CardContent>
       </Card>
-      <Button onClick={() => handleAdvance('start-voting')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
-        🗳️ بدء التصويت
-      </Button>
+      {!isSpectator && (
+        <Button onClick={() => handleAdvance('start-voting')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
+          🗳️ بدء التصويت
+        </Button>
+      )}
+      {isSpectator && (
+        <Card className="bg-purple-950/30 border-purple-800/30">
+          <CardContent className="p-4 text-center">
+            <p className="text-purple-300">🤖 البوت سيبدأ التصويت تلقائياً عند انتهاء الوقت...</p>
+          </CardContent>
+        </Card>
+      )}
     </motion.div>
   );
 
@@ -986,9 +1046,18 @@ export default function RoomPage() {
           <Progress value={(discussionTimer / (game.discussionTime || 180)) * 100} className="mt-3 h-2" />
         </CardContent>
       </Card>
-      <Button onClick={() => handleAdvance('start-voting')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
-        🗳️ بدء التصويت
-      </Button>
+      {!isSpectator && (
+        <Button onClick={() => handleAdvance('start-voting')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
+          🗳️ بدء التصويت
+        </Button>
+      )}
+      {isSpectator && (
+        <Card className="bg-purple-950/30 border-purple-800/30">
+          <CardContent className="p-4 text-center">
+            <p className="text-purple-300">🤖 البوت سيبدأ التصويت تلقائياً عند انتهاء الوقت...</p>
+          </CardContent>
+        </Card>
+      )}
     </motion.div>
   );
 
@@ -1017,9 +1086,18 @@ export default function RoomPage() {
       <p className="text-center text-muted-foreground">تم التصويت: {game.voteCount ?? (game.votes ? Object.keys(game.votes).length : 0)} / {alivePlayers.length}</p>
       {/* Public chat - host can see during voting */}
       {renderPublicChat(false)}
-      <Button onClick={() => handleAdvance('resolve-votes')} disabled={actionLoading} variant="outline" className="w-full border-yellow-800/50 text-yellow-400">
-        📊 إنهاء التصويت وإحصاء النتائج
-      </Button>
+      {!isSpectator && (
+        <Button onClick={() => handleAdvance('resolve-votes')} disabled={actionLoading} variant="outline" className="w-full border-yellow-800/50 text-yellow-400">
+          📊 إنهاء التصويت وإحصاء النتائج
+        </Button>
+      )}
+      {isSpectator && (
+        <Card className="bg-purple-950/30 border-purple-800/30">
+          <CardContent className="p-4 text-center">
+            <p className="text-purple-300">🤖 البوت سينهي التصويت تلقائياً عند انتهاء الوقت...</p>
+          </CardContent>
+        </Card>
+      )}
     </motion.div>
   );
 
@@ -1070,14 +1148,22 @@ export default function RoomPage() {
             </CardContent>
           </Card>
         )}
-        {accused.length > 0 ? (
+        {!isSpectator && accused.length > 0 && (
           <Button onClick={() => handleAdvance('start-justification')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-orange-700 to-orange-600">
             🎤 بدء التبرير
           </Button>
-        ) : (
+        )}
+        {!isSpectator && accused.length === 0 && (
           <Button onClick={() => handleAdvance('advance-to-night')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
             🌙 الانتقال لليل
           </Button>
+        )}
+        {isSpectator && (
+          <Card className="bg-purple-950/30 border-purple-800/30">
+            <CardContent className="p-4 text-center">
+              <p className="text-purple-300">🤖 البوت سيتابع تلقائياً...</p>
+            </CardContent>
+          </Card>
         )}
       </motion.div>
     );
@@ -1125,9 +1211,18 @@ export default function RoomPage() {
           </CardContent>
         </Card>
         {/* MODIFICATION 2: Advance to next justifier or start revote */}
-        <Button onClick={() => handleAdvance('advance-justifier')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
-          {isLast ? '🗳️ بدء إعادة التصويت' : '⏭️ المتهم التالي'}
-        </Button>
+        {!isSpectator && (
+          <Button onClick={() => handleAdvance('advance-justifier')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
+            {isLast ? '🗳️ بدء إعادة التصويت' : '⏭️ المتهم التالي'}
+          </Button>
+        )}
+        {isSpectator && (
+          <Card className="bg-purple-950/30 border-purple-800/30">
+            <CardContent className="p-4 text-center">
+              <p className="text-purple-300">🤖 البوت سينتقل تلقائياً بعد انتهاء الوقت...</p>
+            </CardContent>
+          </Card>
+        )}
       </motion.div>
     );
   };
@@ -1170,9 +1265,18 @@ export default function RoomPage() {
           </Card>
         )}
         <p className="text-center text-muted-foreground">تم التصويت: {game.revoteCount ?? Object.keys(revotes).length} / {alivePlayers.length}</p>
-        <Button onClick={() => handleAdvance('resolve-final-votes')} disabled={actionLoading} variant="outline" className="w-full border-yellow-800/50 text-yellow-400">
-          📊 إنهاء التصويت وإحصاء النتائج النهائية
-        </Button>
+        {!isSpectator && (
+          <Button onClick={() => handleAdvance('resolve-final-votes')} disabled={actionLoading} variant="outline" className="w-full border-yellow-800/50 text-yellow-400">
+            📊 إنهاء التصويت وإحصاء النتائج النهائية
+          </Button>
+        )}
+        {isSpectator && (
+          <Card className="bg-purple-950/30 border-purple-800/30">
+            <CardContent className="p-4 text-center">
+              <p className="text-purple-300">🤖 البوت سينهي التصويت تلقائياً عند انتهاء الوقت...</p>
+            </CardContent>
+          </Card>
+        )}
       </motion.div>
     );
   };
@@ -1204,9 +1308,18 @@ export default function RoomPage() {
             )}
           </CardContent>
         </Card>
-        <Button onClick={() => handleAdvance('advance-to-night')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
-          🌙 الانتقال لليل
-        </Button>
+        {!isSpectator && (
+          <Button onClick={() => handleAdvance('advance-to-night')} disabled={actionLoading} className="w-full h-14 text-lg bg-gradient-to-l from-red-700 to-red-600">
+            🌙 الانتقال لليل
+          </Button>
+        )}
+        {isSpectator && (
+          <Card className="bg-purple-950/30 border-purple-800/30">
+            <CardContent className="p-4 text-center">
+              <p className="text-purple-300">🤖 البوت سينتقل لليل تلقائياً...</p>
+            </CardContent>
+          </Card>
+        )}
       </motion.div>
     );
   };
